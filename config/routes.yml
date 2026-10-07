@@ -1,0 +1,8 @@
+# Route name starts with "api_" on purpose: PrestaShopBundle\EventListener\TokenizedUrlsListener
+# skips the _token CSRF check for such routes, so the endpoint can be called with a plain GET.
+# Employee login is still enforced by PrestaShop\PrestaShop\Adapter\Security\Admin::onKernelRequest.
+api_plugin0_core_info:
+  path: /worldline/core-info
+  methods: [GET]
+  defaults:
+    _controller: 'Plugin0\Controller\Admin\CoreInfoController::indexAction'

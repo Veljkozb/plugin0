@@ -1,0 +1,10 @@
+{
+    "require": {
+        "wl-online-payments-direct/plugin-core-base": "1.0.7"
+    },
+    "autoload": {
+        "psr-4": {
+            "Plugin0\\": "src/"
+        }
+    }
+}
