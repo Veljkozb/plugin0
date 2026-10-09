@@ -5,6 +5,7 @@ namespace Plugin0\Infrastructure\Repository;
 use Db;
 use DbQuery;
 use RuntimeException;
+use Throwable;
 use WOP\OnlinePayments\Core\Infrastructure\ORM\Entity;
 use WOP\OnlinePayments\Core\Infrastructure\ORM\Exceptions\QueryFilterInvalidParamException;
 use WOP\OnlinePayments\Core\Infrastructure\ORM\Interfaces\ConditionallyDeletes;
@@ -12,6 +13,7 @@ use WOP\OnlinePayments\Core\Infrastructure\ORM\QueryFilter\Operators;
 use WOP\OnlinePayments\Core\Infrastructure\ORM\QueryFilter\QueryCondition;
 use WOP\OnlinePayments\Core\Infrastructure\ORM\QueryFilter\QueryFilter;
 use WOP\OnlinePayments\Core\Infrastructure\ORM\Utility\IndexHelper;
+use WOP\OnlinePayments\Core\Infrastructure\Logger\Logger;
 
 /**
  * Prevodi core zahteve (save, select, update, delete) u SQL nad tabelom plugin0_entity.
@@ -25,6 +27,9 @@ class BaseRepository implements ConditionallyDeletes
 
     protected string $entityClass;
     private ?array $indexMapping = null;
+
+    /** Zaštita od petlje: core Logger čita svoja podešavanja preko ConfigEntity, a to je opet ovaj repository. */
+    private static bool $isLogging = false;
 
     public static function getClassName(): string
     {
@@ -44,8 +49,16 @@ class BaseRepository implements ConditionallyDeletes
         $this->applyOrderAndLimit($query, $filter);
 
         $rows = Db::getInstance()->executeS($query);
+        $entities = $this->rowsToEntities(is_array($rows) ? $rows : []);
 
-        return $this->rowsToEntities(is_array($rows) ? $rows : []);
+        $this->log(Logger::DEBUG, sprintf('Read %s: %d row(s)', $this->entityType(), count($entities)), [
+            'filter' => $this->describeFilter($filter),
+            'ids' => array_map(static function (Entity $entity) {
+                return $entity->getId();
+            }, $entities),
+        ]);
+
+        return $entities;
     }
 
     public function selectOne(QueryFilter $filter = null): ?Entity
@@ -61,8 +74,13 @@ class BaseRepository implements ConditionallyDeletes
     public function count(QueryFilter $filter = null): int
     {
         $query = $this->buildSelectQuery($filter)->select('COUNT(*)');
+        $count = (int) Db::getInstance()->getValue($query);
 
-        return (int) Db::getInstance()->getValue($query);
+        $this->log(Logger::DEBUG, sprintf('Counted %s: %d', $this->entityType(), $count), [
+            'filter' => $this->describeFilter($filter),
+        ]);
+
+        return $count;
     }
 
     // ---- pisanje ----------------------------------------------------------------
@@ -82,6 +100,10 @@ class BaseRepository implements ConditionallyDeletes
 
         $entity->setId((int) Db::getInstance()->Insert_ID());
 
+        $this->log(Logger::DEBUG, sprintf('Inserted %s #%d', $entity->getConfig()->getType(), $entity->getId()), [
+            'indexes' => $this->describeIndexes($entity),
+        ]);
+
         return $entity->getId();
     }
 
@@ -97,12 +119,23 @@ class BaseRepository implements ConditionallyDeletes
             }
         }
 
-        return Db::getInstance()->update(static::TABLE_NAME, $this->buildRecord($entity), $where, 0, true);
+        $updated = Db::getInstance()->update(static::TABLE_NAME, $this->buildRecord($entity), $where, 0, true);
+
+        $this->logWrite($updated, 'Updated', $entity, [
+            'indexes' => $this->describeIndexes($entity),
+            'filter' => $this->describeFilter($queryFilter),
+        ]);
+
+        return $updated;
     }
 
     public function delete(Entity $entity): bool
     {
-        return Db::getInstance()->delete(static::TABLE_NAME, 'id = ' . (int) $entity->getId());
+        $deleted = Db::getInstance()->delete(static::TABLE_NAME, 'id = ' . (int) $entity->getId());
+
+        $this->logWrite($deleted, 'Deleted', $entity, []);
+
+        return $deleted;
     }
 
     public function deleteWhere(QueryFilter $queryFilter = null)
@@ -119,8 +152,19 @@ class BaseRepository implements ConditionallyDeletes
         }
 
         $limit = $queryFilter !== null ? (int) $queryFilter->getLimit() : 0;
+        $deleted = Db::getInstance()->delete(static::TABLE_NAME, $where, $limit);
 
-        return Db::getInstance()->delete(static::TABLE_NAME, $where, $limit);
+        $this->log(
+            $deleted ? Logger::DEBUG : Logger::ERROR,
+            sprintf('%s %s rows by filter', $deleted ? 'Deleted' : 'Failed to delete', $entity->getConfig()->getType()),
+            [
+                'filter' => $this->describeFilter($queryFilter),
+                'affectedRows' => $deleted ? Db::getInstance()->Affected_Rows() : 0,
+                'dbError' => $deleted ? '' : Db::getInstance()->getMsgError(),
+            ]
+        );
+
+        return $deleted;
     }
 
     // ---- prevođenje QueryFilter -> SQL ------------------------------------------
@@ -275,5 +319,94 @@ class BaseRepository implements ConditionallyDeletes
         }
 
         return $entities;
+    }
+
+    // ---- logovanje -------------------------------------------------------------
+
+    /**
+     * Zapis za Core log (završava u ps_log preko LoggerService), da se iz loga vidi šta je core čitao i pisao.
+     * Loguje tip, id, indeksirana polja i filter. Kolonu data (ceo entitet, sa šifrovanim kredencijalima) ne loguje.
+     *
+     * @param array<string, mixed> $context
+     */
+    private function log(int $level, string $message, array $context): void
+    {
+        if (self::$isLogging) {
+            return;
+        }
+
+        self::$isLogging = true;
+        try {
+            $component = 'Repository';
+            if ($level === Logger::ERROR) {
+                Logger::logError($message, $component, $context);
+            } else {
+                Logger::logDebug($message, $component, $context);
+            }
+        } catch (Throwable $e) {
+            // Neuspeo zapis u log ne sme da obori čitanje ili upis koji je već uspeo.
+        } finally {
+            self::$isLogging = false;
+        }
+    }
+
+    /** @param array<string, mixed> $context */
+    private function logWrite(bool $success, string $action, Entity $entity, array $context): void
+    {
+        $type = $entity->getConfig()->getType();
+        if ($success) {
+            $this->log(Logger::DEBUG, sprintf('%s %s #%d', $action, $type, (int) $entity->getId()), $context);
+
+            return;
+        }
+
+        $context['dbError'] = Db::getInstance()->getMsgError();
+        $this->log(Logger::ERROR, sprintf('%s failed for %s #%d', $action, $type, (int) $entity->getId()), $context);
+    }
+
+    private function entityType(): string
+    {
+        /** @var Entity $entity */
+        $entity = new $this->entityClass();
+
+        return $entity->getConfig()->getType();
+    }
+
+    /** @return array<string, mixed> ime indeksiranog polja => vrednost */
+    private function describeIndexes(Entity $entity): array
+    {
+        $names = array_flip(IndexHelper::mapFieldsToIndexes($entity));
+        $indexes = [];
+        foreach (IndexHelper::transformFieldsToIndexes($entity) as $index => $value) {
+            $indexes[$names[$index] ?? 'index_' . $index] = $value;
+        }
+
+        return $indexes;
+    }
+
+    /** @return array<string, mixed> */
+    private function describeFilter(?QueryFilter $filter): array
+    {
+        if ($filter === null) {
+            return [];
+        }
+
+        $conditions = [];
+        foreach ($filter->getConditions() as $condition) {
+            $conditions[] = sprintf(
+                '%s %s %s %s',
+                $condition->getChainOperator(),
+                $condition->getColumn(),
+                $condition->getOperator(),
+                json_encode($condition->getValue())
+            );
+        }
+
+        return [
+            'conditions' => $conditions,
+            'orderBy' => $filter->getOrderByColumn() ? $filter->getOrderByColumn() . ' ' . $filter->getOrderDirection() : null,
+            'limit' => $filter->getLimit(),
+            'offset' => $filter->getOffset(),
+        ];
     }
 }

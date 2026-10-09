@@ -46,6 +46,8 @@ class LoggerService implements ShopLoggerAdapter
             $message .= ' | ' . json_encode($context);
         }
 
-        PrestaShopLogger::addLog($message, self::SEVERITY[$level] ?? 1);
+        // Šesti argument (allowDuplicate) = true: PrestaShop bi inače preskočio poruku identičnu nekoj koja je već u ps_log,
+        // a core poruke moraju sve da stignu u log.
+        PrestaShopLogger::addLog($message, self::SEVERITY[$level] ?? 1, null, null, null, true);
     }
 }
