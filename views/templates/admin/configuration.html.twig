@@ -1,0 +1,173 @@
+{% extends '@PrestaShop/Admin/layout.html.twig' %}
+
+{% block content %}
+{# Okruženje izabrano pri učitavanju: aktivno, ili Test kad ništa nije povezano. JS menja prikaz pri promeni menija. #}
+{% set selected = environments[environment] %}
+<div class="row justify-content-center">
+    <div class="col-xl-8">
+
+        <form method="post" action="{{ path('plugin0_configuration') }}">
+            <div class="card">
+                <h3 class="card-header">
+                    <i class="material-icons">settings</i> Worldline configuration
+                    {# Stanje izabranog okruženja: aktivno (core ga koristi), sačuvano ali neaktivno, ili nepovezano. #}
+                    {% if selected.active %}
+                    <span id="plugin0_status" class="badge badge-success ml-2">Connected</span>
+                    {% elseif selected.saved %}
+                    <span id="plugin0_status" class="badge badge-info ml-2">Saved, not active</span>
+                    {% else %}
+                    <span id="plugin0_status" class="badge badge-secondary ml-2">Not connected</span>
+                    {% endif %}
+                </h3>
+
+                <div class="card-body">
+
+                    <div class="form-group">
+                        <label for="environment">Environment</label>
+                        <select class="form-control" id="environment" name="environment">
+                            {% for key, label in {'test': 'Test', 'live': 'Live'} %}
+                            {% set data = environments[key] %}
+                            <option value="{{ key }}" {{ environment == key ? 'selected' }}
+                                    data-saved="{{ data.saved ? '1' : '0' }}"
+                                    data-active="{{ data.active ? '1' : '0' }}"
+                                    data-pspid="{{ data.pspid }}"
+                                    data-api-key="{{ data.api_key }}"
+                                    data-webhook-key="{{ data.webhook_key }}"
+                                    data-has-api-secret="{{ data.has_api_secret ? '1' : '0' }}"
+                                    data-has-webhook-secret="{{ data.has_webhook_secret ? '1' : '0' }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <small class="form-text text-muted">
+                            The API endpoint is chosen automatically: Test uses payment.preprod.direct.worldline-solutions.com, Live uses payment.direct.worldline-solutions.com.
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pspid">PSPID</label>
+                        <input type="text" class="form-control" id="pspid" name="pspid" value="{{ selected.pspid }}" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="api_key">API Key</label>
+                        <input type="text" class="form-control" id="api_key" name="api_key" value="{{ selected.api_key }}" required autocomplete="off">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="api_secret">API Secret</label>
+                        <input type="password" class="form-control" id="api_secret" name="api_secret" value=""
+                               placeholder="{{ selected.has_api_secret ? '•••••••• (saved, leave empty to keep)' : '' }}"
+                               autocomplete="new-password" {{ selected.has_api_secret ? '' : 'required' }}>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="webhook_key">Webhook Key</label>
+                        <input type="text" class="form-control" id="webhook_key" name="webhook_key" value="{{ selected.webhook_key }}" required autocomplete="off">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="webhook_secret">Webhook Secret</label>
+                        <input type="password" class="form-control" id="webhook_secret" name="webhook_secret" value=""
+                               placeholder="{{ selected.has_webhook_secret ? '•••••••• (saved, leave empty to keep)' : '' }}"
+                               autocomplete="new-password" {{ selected.has_webhook_secret ? '' : 'required' }}>
+                    </div>
+
+                    <hr>
+
+                    <div class="form-group">
+                        <label for="webhook_url">Webhook URL</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="webhook_url" value="{{ webhook_url }}" readonly>
+                            <div class="input-group-append">
+                                <button type="button" class="btn btn-outline-secondary" id="copy_webhook_url">Copy</button>
+                            </div>
+                        </div>
+                        <small class="form-text text-muted">
+                            Paste this URL in the Worldline Merchant Portal under Developer &gt; Webhooks.
+                        </small>
+                    </div>
+
+                </div>
+
+                <div class="card-footer d-flex justify-content-between">
+                    <div>
+                        {# Dugme pripada formi plugin0_disconnect_form ispod, preko atributa form.
+                           Vidi se samo kad izabrano okruženje ima sačuvane kredencijale. #}
+                        <button type="submit" form="plugin0_disconnect_form" id="plugin0_disconnect_button"
+                                class="btn btn-outline-danger{{ selected.saved ? '' : ' d-none' }}">Disconnect</button>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </div>
+        </form>
+
+        {# Posebna forma: ugnježdene forme nisu dozvoljene, a disconnect ne šalje kredencijale.
+           Polje environment JS postavlja na okruženje izabrano u meniju. #}
+        <form id="plugin0_disconnect_form" method="post" action="{{ path('plugin0_configuration') }}">
+            <input type="hidden" name="action" value="disconnect">
+            <input type="hidden" id="plugin0_disconnect_environment" name="environment" value="{{ environment }}">
+        </form>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block javascripts %}
+{{ parent() }}
+<script>
+    document.getElementById('copy_webhook_url').addEventListener('click', function () {
+        var input = document.getElementById('webhook_url');
+        input.select();
+        navigator.clipboard.writeText(input.value);
+        this.textContent = 'Copied';
+    });
+
+    (function () {
+        var select = document.getElementById('environment');
+        var status = document.getElementById('plugin0_status');
+        var disconnectButton = document.getElementById('plugin0_disconnect_button');
+        var disconnectForm = document.getElementById('plugin0_disconnect_form');
+        var disconnectEnvironment = document.getElementById('plugin0_disconnect_environment');
+
+        function selectedOption() {
+            return select.options[select.selectedIndex];
+        }
+
+        function showSecret(id, hasSecret) {
+            var input = document.getElementById(id);
+            input.value = '';
+            input.placeholder = hasSecret ? '•••••••• (saved, leave empty to keep)' : '';
+            input.required = !hasSecret;
+        }
+
+        // Polja, značka i Disconnect uvek prikazuju okruženje izabrano u meniju.
+        function showEnvironment() {
+            var option = selectedOption();
+            var saved = option.getAttribute('data-saved') === '1';
+            var active = option.getAttribute('data-active') === '1';
+
+            document.getElementById('pspid').value = option.getAttribute('data-pspid');
+            document.getElementById('api_key').value = option.getAttribute('data-api-key');
+            document.getElementById('webhook_key').value = option.getAttribute('data-webhook-key');
+            showSecret('api_secret', option.getAttribute('data-has-api-secret') === '1');
+            showSecret('webhook_secret', option.getAttribute('data-has-webhook-secret') === '1');
+
+            status.className = 'badge ml-2 ' + (active ? 'badge-success' : (saved ? 'badge-info' : 'badge-secondary'));
+            status.textContent = active ? 'Connected' : (saved ? 'Saved, not active' : 'Not connected');
+
+            disconnectButton.classList.toggle('d-none', !saved);
+            disconnectEnvironment.value = select.value;
+        }
+
+        select.addEventListener('change', showEnvironment);
+        // Browser posle osvežavanja može da vrati stari izbor u meniju; uskladi prikaz sa njim.
+        showEnvironment();
+
+        disconnectForm.addEventListener('submit', function (event) {
+            var label = selectedOption().text;
+            if (!window.confirm('Disconnect ' + label + '? Saved ' + label + ' credentials will be removed.')) {
+                event.preventDefault();
+            }
+        });
+    })();
+</script>
+{% endblock %}
