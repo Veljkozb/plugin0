@@ -12,6 +12,9 @@ use WOP\OnlinePayments\Core\Infrastructure\Logger\Logger;
  */
 class LoggerService implements ShopLoggerAdapter
 {
+    /** Početak svake poruke u ps_log; LogReader po njemu prepoznaje naše zapise. */
+    public const PREFIX = 'WORLDLINE';
+
     /** Core nivo -> PrestaShop severity (1 info, 2 warning, 3 error, 4 major). */
     private const SEVERITY = [
         Logger::ERROR => 3,
@@ -32,7 +35,8 @@ class LoggerService implements ShopLoggerAdapter
         $level = $data->getLogLevel();
 
         $message = sprintf(
-            'WORLDLINE [%s] %s: %s',
+            '%s [%s] %s: %s',
+            self::PREFIX,
             self::LEVEL_NAME[$level] ?? 'INFO',
             $data->getComponent(),
             $data->getMessage()

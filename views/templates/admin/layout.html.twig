@@ -1,0 +1,36 @@
+{#
+  Okvir svake stranice plugina, prenet iz demo projekta (resources/js/shared/AdminLayout.jsx):
+  bočni meni levo, stranica desno.
+
+  - Configuration je uvek u meniju: na njoj nepovezana prodavnica postaje povezana.
+  - Ostale stavke se vide samo kad je prodavnica povezana, kao u demo projektu.
+  - Payment methods i Settings iz demo menija nisu ovde, jer plugin0 te stranice još nema.
+  - Odjava i email iz dna demo menija nisu ovde, jer ih PrestaShop admin već ima u gornjoj traci.
+
+  Kontroler šalje: current_page ('configuration' ili 'logs') i connected (true/false).
+#}
+{% extends '@PrestaShop/Admin/layout.html.twig' %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-3 col-xl-2 mb-3">
+        <div class="card">
+            <h3 class="card-header">Worldline</h3>
+            <nav class="list-group list-group-flush" aria-label="Worldline">
+                <a href="{{ path('plugin0_configuration') }}"
+                   class="list-group-item list-group-item-action{{ current_page == 'configuration' ? ' active' }}"
+                   {% if current_page == 'configuration' %}aria-current="page"{% endif %}>Configuration</a>
+                {% if connected %}
+                <a href="{{ path('plugin0_logs') }}"
+                   class="list-group-item list-group-item-action{{ current_page == 'logs' ? ' active' }}"
+                   {% if current_page == 'logs' %}aria-current="page"{% endif %}>Logs</a>
+                {% endif %}
+            </nav>
+        </div>
+    </div>
+
+    <div class="col-lg-9 col-xl-10">
+        {% block plugin0_content %}{% endblock %}
+    </div>
+</div>
+{% endblock %}

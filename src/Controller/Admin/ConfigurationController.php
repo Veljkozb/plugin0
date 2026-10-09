@@ -58,6 +58,8 @@ class ConfigurationController extends FrameworkBundleAdminController
         }
 
         return $this->render(self::TEMPLATE, [
+            'current_page' => 'configuration',
+            'connected' => $activeEnvironment !== null,
             'environment' => $activeEnvironment ?? 'test',
             'environments' => $environments,
             'webhook_url' => $this->getContext()->link->getModuleLink('plugin0', 'webhook', [], true),

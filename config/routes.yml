@@ -12,3 +12,9 @@ plugin0_configuration:
   defaults:
     _controller: 'Plugin0\Controller\Admin\ConfigurationController::indexAction'
     _legacy_controller: 'AdminPlugin0Configuration'
+plugin0_logs:
+  path: /worldline/logs
+  methods: [GET]
+  defaults:
+    _controller: 'Plugin0\Controller\Admin\LogsController::indexAction'
+    _legacy_controller: 'AdminPlugin0Configuration'

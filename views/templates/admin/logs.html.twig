@@ -1,0 +1,96 @@
+{#
+  Logs stranica, kao u demo projektu (resources/js/logs/LogsScreen.jsx): zapisi najnoviji prvi, filter po nivou,
+  straničenje. Samo prikazuje; nema ničega što bi menjalo ili brisalo zapis.
+  Kolone su one koje traži tiket: vreme, nivo, poruka, kontekst.
+#}
+{% extends '@Modules/plugin0/views/templates/admin/layout.html.twig' %}
+
+{% block plugin0_content %}
+{% set badge = {'ERROR': 'badge-danger', 'WARNING': 'badge-warning', 'INFO': 'badge-info', 'DEBUG': 'badge-secondary'} %}
+{% set filter = level ? {level: level|lower} : {} %}
+<div class="card">
+    <h3 class="card-header"><i class="material-icons">list</i> Logs</h3>
+
+    <div class="card-body">
+        <div class="form-group" style="max-width: 20rem;">
+            <label for="plugin0_level">Level</label>
+            {# Vrednost svake opcije je cela adresa, jer PrestaShop admin adrese nose _token koji forma ne bi prenela. #}
+            <select id="plugin0_level" class="form-control">
+                <option value="{{ path('plugin0_logs') }}" {{ level is null ? 'selected' }}>All levels</option>
+                {% for item in levels %}
+                <option value="{{ path('plugin0_logs', {level: item|lower}) }}" {{ level == item ? 'selected' }}>{{ item|capitalize }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        {% if pagination.total == 0 %}
+            <p class="text-muted mb-0">{{ level ? 'No entries at this level.' : 'No entries have been written yet.' }}</p>
+        {% elseif entries is empty %}
+            <p class="text-muted mb-0">Page {{ pagination.page }} is past the last page, of {{ pagination.total }}.</p>
+        {% else %}
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th scope="col" class="text-nowrap">Time</th>
+                            <th scope="col">Level</th>
+                            <th scope="col">Message</th>
+                            <th scope="col">Context</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in entries %}
+                        <tr>
+                            <td class="text-nowrap">{{ entry.time|date('d M Y, H:i:s') }}</td>
+                            <td><span class="badge {{ badge[entry.level] ?? 'badge-light' }}">{{ entry.level ?: '?' }}</span></td>
+                            <td class="text-break">
+                                {% if entry.component %}<span class="text-muted">{{ entry.component }}:</span>{% endif %}
+                                {{ entry.message }}
+                            </td>
+                            <td>
+                                {% if entry.context %}
+                                <details>
+                                    <summary>Show</summary>
+                                    <pre class="mb-0 small" style="white-space: pre-wrap; word-break: break-word;">{{ entry.context }}</pre>
+                                </details>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+
+        {% if pagination.total > 0 %}
+        <nav aria-label="Pages" class="d-flex justify-content-between align-items-center mt-3">
+            <span class="text-muted">
+                {% if pagination.from %}Showing {{ pagination.from }}–{{ pagination.to }} of {{ pagination.total }}{% endif %}
+            </span>
+            <ul class="pagination mb-0">
+                <li class="page-item{{ pagination.page <= 1 ? ' disabled' }}">
+                    <a class="page-link" href="{{ path('plugin0_logs', filter|merge({page: max(1, min(pagination.page - 1, pagination.last_page))})) }}">Previous</a>
+                </li>
+                <li class="page-item disabled">
+                    <span class="page-link">Page {{ pagination.page }} of {{ pagination.last_page }}</span>
+                </li>
+                <li class="page-item{{ pagination.page >= pagination.last_page ? ' disabled' }}">
+                    <a class="page-link" href="{{ path('plugin0_logs', filter|merge({page: pagination.page + 1})) }}">Next</a>
+                </li>
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block javascripts %}
+{{ parent() }}
+<script>
+    document.getElementById('plugin0_level').addEventListener('change', function () {
+        window.location.href = this.value;
+    });
+</script>
+{% endblock %}
