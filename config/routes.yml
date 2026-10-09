@@ -6,3 +6,9 @@ api_plugin0_core_info:
   methods: [GET]
   defaults:
     _controller: 'Plugin0\Controller\Admin\CoreInfoController::indexAction'
+plugin0_configuration:
+  path: /worldline/configuration
+  methods: [GET, POST]
+  defaults:
+    _controller: 'Plugin0\Controller\Admin\ConfigurationController::indexAction'
+    _legacy_controller: 'AdminPlugin0Configuration'

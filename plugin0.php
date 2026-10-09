@@ -28,6 +28,7 @@ class Plugin0 extends Module
         \Plugin0\Bootstrap::boot();
 
         return parent::install()
+            && \Plugin0\Infrastructure\Installer::createTables()
             && $this->registerHook('actionDispatcherBefore');
     }
 
@@ -35,7 +36,18 @@ class Plugin0 extends Module
     {
         \Plugin0\Bootstrap::boot();
 
-        return parent::uninstall();
+        return \Plugin0\Infrastructure\Installer::dropTables()
+            && parent::uninstall();
+    }
+
+    /**
+     * Dugme "Configure" u Module Manager-u: PrestaShop zove ovu metodu, mi vodimo na Symfony stranicu.
+     */
+    public function getContent()
+    {
+        \Tools::redirectAdmin(
+            \PrestaShop\PrestaShop\Adapter\SymfonyContainer::getInstance()->get('router')->generate('plugin0_configuration')
+        );
     }
 
     /**
