@@ -4,10 +4,10 @@
 
   - Configuration je uvek u meniju: na njoj nepovezana prodavnica postaje povezana.
   - Ostale stavke se vide samo kad je prodavnica povezana, kao u demo projektu.
-  - Payment methods i Settings iz demo menija nisu ovde, jer plugin0 te stranice još nema.
+  - Payment methods iz demo menija nije ovde, jer plugin0 tu stranicu još nema.
   - Odjava i email iz dna demo menija nisu ovde, jer ih PrestaShop admin već ima u gornjoj traci.
 
-  Kontroler šalje: current_page ('configuration' ili 'logs') i connected (true/false).
+  Kontroler šalje: current_page ('configuration', 'settings' ili 'logs') i connected (true/false).
 #}
 {% extends '@PrestaShop/Admin/layout.html.twig' %}
 
@@ -21,6 +21,9 @@
                    class="list-group-item list-group-item-action{{ current_page == 'configuration' ? ' active' }}"
                    {% if current_page == 'configuration' %}aria-current="page"{% endif %}>Configuration</a>
                 {% if connected %}
+                <a href="{{ path('plugin0_settings') }}"
+                   class="list-group-item list-group-item-action{{ current_page == 'settings' ? ' active' }}"
+                   {% if current_page == 'settings' %}aria-current="page"{% endif %}>Settings</a>
                 <a href="{{ path('plugin0_logs') }}"
                    class="list-group-item list-group-item-action{{ current_page == 'logs' ? ' active' }}"
                    {% if current_page == 'logs' %}aria-current="page"{% endif %}>Logs</a>

@@ -295,10 +295,33 @@ class BaseRepository implements ConditionallyDeletes
         $record = ['data' => pSQL(json_encode($entity->toArray()), true)];
 
         foreach (IndexHelper::transformFieldsToIndexes($entity) as $index => $value) {
-            $record['index_' . $index] = $value !== null ? pSQL((string) $value, true) : null;
+            $record['index_' . $index] = $this->indexValue($value);
         }
 
         return $record;
+    }
+
+    /**
+     * Vrednost index kolone za Db::insert/update, koje zovemo sa $null_values = true da bi NULL ostao NULL.
+     * PrestaShop tada i prazan string pretvara u NULL, a Core prazan string koristi kao pravu vrednost:
+     * kontekst tenanta u ConfigEntity je '' (jedan tenant). Da bi "context = ''" posle našao red, prazan
+     * string ide kao sirov SQL '' (oblik ['type' => 'sql'] koji Db prihvata), a ne kao tekst.
+     *
+     * @param mixed $value
+     *
+     * @return array{type: string, value: string}|string|null
+     */
+    private function indexValue($value)
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if ($value === '') {
+            return ['type' => 'sql', 'value' => "''"];
+        }
+
+        return pSQL((string) $value, true);
     }
 
     protected function rowsToEntities(array $rows): array

@@ -1,0 +1,104 @@
+{#
+  Settings stranica, kao u demo projektu (resources/js/settings/SettingsScreen.jsx): Log level sa tekstom efekta
+  pored polja, Rows per page, dugmad Save i Restore defaults. Restore traži potvrdu pre slanja, kao RestoreDialog u demu.
+  Demo polje Default currency nije ovde: ništa u plugin0 ne bi čitalo tu vrednost.
+
+  Kontroler šalje: form (log_level, rows_per_page), errors (poruka po polju), levels (value, label, effect),
+  defaults (log_level, rows_per_page), min_rows, max_rows.
+#}
+{% extends '@Modules/plugin0/views/templates/admin/layout.html.twig' %}
+
+{% block plugin0_content %}
+<div class="row justify-content-center">
+    <div class="col-xl-8">
+
+        {# novalidate: pravila proverava kontroler, kao u demu, pa je poruka ispod polja uvek ona sa servera. #}
+        <form method="post" action="{{ path('plugin0_settings') }}" novalidate>
+            <input type="hidden" name="action" value="save">
+            <div class="card">
+                <h3 class="card-header"><i class="material-icons">tune</i> Settings</h3>
+
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="log_level">Log level</label>
+                        <select class="form-control{{ errors.log_level is defined ? ' is-invalid' }}" id="log_level" name="log_level">
+                            {% for level in levels %}
+                            <option value="{{ level.value }}" data-effect="{{ level.effect }}" {{ form.log_level == level.value ? 'selected' }}>{{ level.label }}</option>
+                            {% endfor %}
+                        </select>
+                        {% if errors.log_level is defined %}
+                        <div class="invalid-feedback">{{ errors.log_level }}</div>
+                        {% endif %}
+                        {# Efekat trenutnog izbora pored polja, kao u demu; JS ga menja pri promeni menija. #}
+                        <small class="form-text text-muted" id="plugin0_log_level_effect"></small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="rows_per_page">Rows per page</label>
+                        <input type="number" class="form-control{{ errors.rows_per_page is defined ? ' is-invalid' }}"
+                               id="rows_per_page" name="rows_per_page" value="{{ form.rows_per_page }}"
+                               min="{{ min_rows }}" max="{{ max_rows }}" step="1" style="max-width: 10rem;">
+                        {% if errors.rows_per_page is defined %}
+                        <div class="invalid-feedback">{{ errors.rows_per_page }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">A whole number from {{ min_rows }} to {{ max_rows }}. The Logs list shows this many entries per page.</small>
+                    </div>
+                </div>
+
+                <div class="card-footer d-flex justify-content-between">
+                    {# Dugme pripada formi plugin0_restore_form ispod, preko atributa form. #}
+                    <button type="submit" form="plugin0_restore_form" class="btn btn-outline-danger">Restore defaults</button>
+                    <button type="submit" class="btn btn-primary" id="plugin0_save_button">Save</button>
+                </div>
+            </div>
+        </form>
+
+        {# Posebna forma: ugnježdene forme nisu dozvoljene, a Restore ne šalje vrednosti. #}
+        <form id="plugin0_restore_form" method="post" action="{{ path('plugin0_settings') }}">
+            <input type="hidden" name="action" value="restore">
+        </form>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block javascripts %}
+{{ parent() }}
+<script>
+    (function () {
+        var select = document.getElementById('log_level');
+        var effect = document.getElementById('plugin0_log_level_effect');
+        var rows = document.getElementById('rows_per_page');
+        var saveButton = document.getElementById('plugin0_save_button');
+        var initial = { level: select.value, rows: rows.value };
+
+        function showEffect() {
+            var option = select.options[select.selectedIndex];
+            effect.textContent = option ? option.getAttribute('data-effect') : '';
+        }
+
+        // Save ima smisla samo kad se nešto promenilo, kao u demu.
+        function showDirty() {
+            saveButton.disabled = select.value === initial.level && rows.value === initial.rows;
+        }
+
+        select.addEventListener('change', function () {
+            showEffect();
+            showDirty();
+        });
+        rows.addEventListener('input', showDirty);
+        // Browser posle osvežavanja može da vrati stari izbor u polja; uskladi prikaz sa njim.
+        showEffect();
+        showDirty();
+
+        document.getElementById('plugin0_restore_form').addEventListener('submit', function (event) {
+            var question = 'Restore every setting to its default?\n\n'
+                + 'The log level goes back to {{ defaults.log_level|capitalize }} and the rows per page to {{ defaults.rows_per_page }}. '
+                + 'What is saved now is lost.';
+            if (!window.confirm(question)) {
+                event.preventDefault();
+            }
+        });
+    })();
+</script>
+{% endblock %}
