@@ -2,19 +2,21 @@
 
 namespace Plugin0\Infrastructure;
 
-use Plugin0\Settings\LogLevel;
-use Plugin0\Settings\SettingsService;
+use Plugin0\Services;
 use PrestaShopLogger;
+use Throwable;
 use WOP\OnlinePayments\Core\Infrastructure\Logger\Interfaces\ShopLoggerAdapter;
 use WOP\OnlinePayments\Core\Infrastructure\Logger\LogContextData;
 use WOP\OnlinePayments\Core\Infrastructure\Logger\LogData;
 use WOP\OnlinePayments\Core\Infrastructure\Logger\Logger;
 
 /**
- * Core piše svoje poruke ovde; mi ih prosleđujemo u PrestaShop log (ps_log, Advanced Parameters > Logs).
+ * Core piše svoje poruke ovde; mi ih prosleđujemo u PrestaShop log (ps_log, Advanced Parameters > Logs). Istim
+ * putem idu i demo servisi: njihov PSR-3 logger (Adapter\CoreLogger) zove Core Logger, a Core ovo.
  *
  * Core šalje svaki nivo, i DEBUG, bez filtera (Logger::logMessage zove ShopLoggerAdapter uvek). Šta se od toga
- * upisuje odlučuje podešavanje "Log level" sa Settings stranice: zapis ispod podešenog nivoa se preskače.
+ * upisuje odlučuje podešavanje "Log level" sa Settings stranice (demo SettingsService::logLevel): zapis ispod
+ * podešenog nivoa se preskače.
  */
 class LoggerService implements ShopLoggerAdapter
 {
@@ -29,14 +31,7 @@ class LoggerService implements ShopLoggerAdapter
         Logger::DEBUG => 1,
     ];
 
-    private const LEVEL_NAME = [
-        Logger::ERROR => 'ERROR',
-        Logger::WARNING => 'WARNING',
-        Logger::INFO => 'INFO',
-        Logger::DEBUG => 'DEBUG',
-    ];
-
-    /** Podešeni nivo, keširan po PHP procesu; null = još nije pročitan. SettingsService ga briše posle upisa. */
+    /** Podešeni nivo (Core broj), keširan po PHP procesu; null = još nije pročitan. */
     private static ?int $minLogLevel = null;
 
     /** Zaštita od petlje: podešavanje se čita kroz BaseRepository, koji svoje čitanje takođe loguje. */
@@ -45,14 +40,14 @@ class LoggerService implements ShopLoggerAdapter
     public function logMessage(LogData $data): void
     {
         $level = $data->getLogLevel();
-        if (!LogLevel::isWritten($level, $this->minLogLevel())) {
+        if (!CoreLogLevel::isWritten($level, $this->minLogLevel())) {
             return;
         }
 
         $message = sprintf(
             '%s [%s] %s: %s',
             self::PREFIX,
-            self::LEVEL_NAME[$level] ?? 'INFO',
+            CoreLogLevel::token($level),
             $data->getComponent(),
             $data->getMessage()
         );
@@ -89,10 +84,13 @@ class LoggerService implements ShopLoggerAdapter
         return $context;
     }
 
-    /** SettingsService zove posle upisa podešavanja, da novi nivo važi odmah, u istom procesu. */
-    public static function forgetMinLogLevel(): void
+    /**
+     * Demo LogLevelApplier (Adapter\LogLevelApplier) zove oko čuvanja podešavanja: zadati nivo važi odmah, do kraja
+     * zahteva, bez ponovnog čitanja iz baze.
+     */
+    public static function useMinLogLevel(int $level): void
     {
-        self::$minLogLevel = null;
+        self::$minLogLevel = $level;
     }
 
     private function minLogLevel(): int
@@ -108,7 +106,11 @@ class LoggerService implements ShopLoggerAdapter
 
         self::$readingMinLogLevel = true;
         try {
-            self::$minLogLevel = (new SettingsService())->logLevel();
+            self::$minLogLevel = CoreLogLevel::fromSetting(Services::settings()->logLevel());
+        } catch (Throwable $e) {
+            // Podešavanje se ne može pročitati (baza, tabela): važi default, kao demo UseConfiguredLevel; ne pamti
+            // se, pa sledeći zapis pokuša ponovo.
+            return CoreLogLevel::fromSetting(Services::settings()->defaultLogLevel());
         } finally {
             self::$readingMinLogLevel = false;
         }

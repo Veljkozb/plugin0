@@ -1,11 +1,11 @@
 {#
-  Settings stranica, kao u demo projektu (resources/js/settings/SettingsScreen.jsx): Log level sa tekstom efekta
-  pored polja, Default currency, Rows per page, dugmad Save i Restore defaults. Restore traži potvrdu pre slanja,
-  kao RestoreDialog u demu. Default currency nudi valute uključene u prodavnici; tekst ispod polja kaže šta
-  promena radi sa metodama plaćanja (SettingsService::spreadDefaultCurrency).
+  Settings stranica, kao u demo projektu (resources/js/settings/SettingsScreen.jsx, RestoreDialog.jsx): Log level sa
+  tekstom efekta pored polja, Default currency, Rows per page, dugmad Save i Restore defaults. Save je omogućen samo
+  kad se nešto promenilo; Restore traži potvrdu pre slanja, rečima demo RestoreDialog-a. Default currency nudi
+  valute koje je prodavnica uključila; dok nijedna nije izabrana (demo: null), select počinje sa "Choose a currency".
 
   Kontroler šalje: form (log_level, default_currency, rows_per_page), errors (poruka po polju), levels (value, label,
-  effect), currencies (kod => naziv), defaults (log_level, default_currency, rows_per_page), min_rows, max_rows.
+  effect), currencies (kod => naziv), min_rows, max_rows.
 #}
 {% extends '@Modules/plugin0/views/templates/admin/layout.html.twig' %}
 
@@ -30,7 +30,7 @@
                         {% if errors.log_level is defined %}
                         <div class="invalid-feedback">{{ errors.log_level }}</div>
                         {% endif %}
-                        {# Efekat trenutnog izbora pored polja, kao u demu; JS ga menja pri promeni menija. #}
+                        {# Requirement 4.1: efekat trenutnog izbora pored polja; JS ga menja pri promeni menija. #}
                         <small class="form-text text-muted" id="plugin0_log_level_effect"></small>
                     </div>
 
@@ -40,6 +40,9 @@
                         <p class="text-muted mb-0">The shop has no currency enabled.</p>
                         {% else %}
                         <select class="form-control{{ errors.default_currency is defined ? ' is-invalid' }}" id="default_currency" name="default_currency" style="max-width: 20rem;">
+                            {% if form.default_currency is empty %}
+                            <option value="" selected>Choose a currency</option>
+                            {% endif %}
                             {% for code, name in currencies %}
                             <option value="{{ code }}" {{ form.default_currency == code ? 'selected' }}>{{ code }} – {{ name }}</option>
                             {% endfor %}
@@ -48,7 +51,7 @@
                         {% if errors.default_currency is defined %}
                         <div class="invalid-feedback d-block">{{ errors.default_currency }}</div>
                         {% endif %}
-                        <small class="form-text text-muted">Every payment method is offered in this currency. A method without currencies of its own is offered only in it; when you change it, the new currency is added to the currencies of every other method.</small>
+                        <small class="form-text text-muted">The currency a new payment method starts with on its form.</small>
                     </div>
 
                     <div class="form-group">
@@ -59,7 +62,7 @@
                         {% if errors.rows_per_page is defined %}
                         <div class="invalid-feedback">{{ errors.rows_per_page }}</div>
                         {% endif %}
-                        <small class="form-text text-muted">A whole number from {{ min_rows }} to {{ max_rows }}. The Logs list shows this many entries per page.</small>
+                        <small class="form-text text-muted">A whole number from {{ min_rows }} to {{ max_rows }}. The Payment methods and Logs lists show this many rows per page.</small>
                     </div>
                 </div>
 
@@ -115,10 +118,11 @@
         showEffect();
         showDirty();
 
+        // Potvrda pre Restore defaults, rečima demo RestoreDialog-a.
         document.getElementById('plugin0_restore_form').addEventListener('submit', function (event) {
             var question = 'Restore every setting to its default?\n\n'
-                + 'The log level goes back to {{ defaults.log_level|capitalize }}, the default currency to {{ defaults.default_currency }} '
-                + 'and the rows per page to {{ defaults.rows_per_page }}. What is saved now is lost.';
+                + 'The log level, the default currency and the rows per page all go back to their defaults, '
+                + 'and what is saved now is lost.';
             if (!window.confirm(question)) {
                 event.preventDefault();
             }

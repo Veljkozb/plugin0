@@ -1,33 +1,26 @@
 {#
-  Payment methods lista, po izgledu dema (resources/js/admin/PaymentMethodList.jsx, CodeTags.jsx): naslov, pretraga
-  levo, ispod nje red filtera sa Clear filters, tabela bez okvira ćelija, kodovi zemalja i valuta kao čipovi (prva
-  tri, ostali iza "+N ▾"), prekidač, Edit, straničenje sa "Showing a–b of n". Isključena metoda ostaje u listi,
-  cela prigušena.
+  Payment methods lista, po demu (resources/js/admin/PaymentMethodList.jsx, CodeTags.jsx, DeleteDialog.jsx): naslov,
+  pretraga levo i "Add payment method" desno, ispod red filtera Currency, Country, Type i Status sa Clear filters,
+  tabela Order, Name, Code, Type, Currencies, Countries, Active, Edit i Delete, straničenje "Showing a–b of n".
+  Isključena metoda ostaje u listi, cela prigušena. Prazna tabela: objašnjenje i Add payment method; filter bez
+  poklapanja: "No payment methods match these filters" i Clear filters. Delete otvara potvrdu (requirement 3.3);
+  briše tek dugme u njoj. Kodovi zemalja i valuta kao čipovi: prva tri, ostali iza "+N ▾".
 
-  Sadržaj je Worldline katalog iz Core-a, pa nema "Add payment method" ni Delete, a prazna tabela ne postoji: samo
-  "nema poklapanja" kad filter ništa ne nađe. Umesto demo kolone Order i filtera Type stoje Group i Type (način
-  integracije iz Worldline kataloga), jer Core nema redosled metoda. Prazno ograničenje zemalja piše "All"; valute
-  nikad nisu prazne (metoda bez sopstvene liste prati Default currency, PaymentMethodsService::all).
-
-  Kontroler šalje: filter (search, group, country, currency, status, page), query (samo postavljeni parametri), back
-  (isto kao query string, za povratak), groups, countries, currencies (kod => naziv), statuses, page (items, total,
-  page, last_page, from, to, error), token (_token tekuće adrese).
+  Kontroler šalje: filter (search, currency, country, type, status, page), query (samo postavljeni parametri), back
+  (isto kao query string, za povratak), currencies i countries (kod => naziv), types (value, label, description),
+  statuses, page (data: metode kako ih daje PaymentMethodService::present; meta: page, per_page, total, from, to,
+  last_page, table_empty) ili null kad lista nije mogla da se učita, token (_token tekuće adrese).
 #}
 {% extends '@Modules/plugin0/views/templates/admin/layout.html.twig' %}
 
-{# Kodovi ograničenja kao u demo CodeTags: prva tri, ostali iza dugmeta koje otvara celu listu. #}
 {% macro codes(codes, label) %}
-{% if codes is empty %}
-    <span>All</span>
-{% else %}
-    <span class="plugin0-codes">
-        {% for code in codes|slice(0, 3) %}<span class="plugin0-tag">{{ code }}</span>{% endfor %}
-        {% if codes|length > 3 %}
-        <button type="button" class="plugin0-tag plugin0-more" aria-expanded="false" aria-label="Show all {{ codes|length }} {{ label }}">+{{ codes|length - 3 }}<span aria-hidden="true">▼</span></button>
-        <span class="plugin0-codes-all" hidden>{% for code in codes %}<span>{{ code }}</span>{% endfor %}</span>
-        {% endif %}
-    </span>
-{% endif %}
+<span class="plugin0-codes">
+    {% for code in codes|slice(0, 3) %}<span class="plugin0-tag">{{ code }}</span>{% endfor %}
+    {% if codes|length > 3 %}
+    <button type="button" class="plugin0-tag plugin0-more" aria-expanded="false" aria-label="Show all {{ codes|length }} {{ label }}">+{{ codes|length - 3 }}<span aria-hidden="true">▼</span></button>
+    <span class="plugin0-codes-all" hidden>{% for code in codes %}<span>{{ code }}</span>{% endfor %}</span>
+    {% endif %}
+</span>
 {% endmacro %}
 
 {% macro filter(id, label, value, choices, placeholder) %}
@@ -48,107 +41,140 @@
     <div class="card-body p-4 plugin0-page">
         <h1>Payment methods</h1>
 
-        {# GET forma zamenjuje ceo query string, pa _token ide u skriveno polje: PrestaShop ga traži na svakoj admin adresi. #}
-        <form method="get" action="{{ path('plugin0_payment_methods') }}" class="mb-4">
-            <input type="hidden" name="_token" value="{{ token }}">
-            <div class="form-row mb-3">
-                <div class="col-md-5 form-group mb-0">
-                    <label for="plugin0_search">Search</label>
-                    <input type="search" class="form-control" id="plugin0_search" name="search" value="{{ filter.search }}"
-                           placeholder="Name or code" maxlength="64">
-                </div>
+        {% if page is null %}
+            <p class="text-muted mb-0">The payment methods could not be loaded.</p>
+        {% elseif page.meta.table_empty %}
+            {# Requirement 3.1: bez metoda, umesto tabele kratko objašnjenje i jedina radnja koja ima smisla. #}
+            <div class="plugin0-empty">
+                <h4>No payment methods yet</h4>
+                <p class="text-muted mx-auto" style="max-width: 28rem;">Payment methods are what a customer can choose from at checkout. Add the first one to start offering it.</p>
+                <a href="{{ path('plugin0_payment_method_create') }}" class="btn btn-primary mt-3">Add payment method</a>
             </div>
-            {# Filter valuta pokazuje samo kod, kao u demu; filter zemalja naziv, jer je kod zemlje manje poznat. #}
-            {% set currency_codes = {} %}
-            {% for code in currencies|keys %}{% set currency_codes = currency_codes|merge({(code): code}) %}{% endfor %}
-            <div class="form-row align-items-end">
-                {{ ui.filter('currency', 'Currency', filter.currency, currency_codes, 'All currencies') }}
-                {{ ui.filter('country', 'Country', filter.country, countries, 'All countries') }}
-                {{ ui.filter('group', 'Group', filter.group, groups, 'All groups') }}
-                {{ ui.filter('status', 'Status', filter.status, statuses, 'All') }}
-                <div class="col-md-4 form-group mb-md-0">
-                    <button type="submit" class="btn btn-primary">Apply</button>
-                    <a href="{{ path('plugin0_payment_methods') }}" class="btn btn-outline-secondary ml-2{{ query is empty ? ' disabled' }}"
-                       {% if query is empty %}aria-disabled="true" tabindex="-1"{% endif %}>Clear filters</a>
+        {% else %}
+            {# GET forma zamenjuje ceo query string, pa _token ide u skriveno polje: PrestaShop ga traži na svakoj admin adresi. #}
+            <form method="get" action="{{ path('plugin0_payment_methods') }}" class="mb-4">
+                <input type="hidden" name="_token" value="{{ token }}">
+                <div class="form-row mb-3 align-items-end">
+                    <div class="col-md-5 form-group mb-0">
+                        <label for="plugin0_search">Search</label>
+                        <input type="search" class="form-control" id="plugin0_search" name="search" value="{{ filter.search }}"
+                               placeholder="Name or code" maxlength="64">
+                    </div>
+                    <div class="col-md-7 form-group mb-0 text-right">
+                        <a href="{{ path('plugin0_payment_method_create', {back: back}) }}" class="btn btn-primary">Add payment method</a>
+                    </div>
                 </div>
+                {% set currency_codes = {} %}
+                {% for code in currencies|keys %}{% set currency_codes = currency_codes|merge({(code): code}) %}{% endfor %}
+                {% set type_choices = {} %}
+                {% for type in types %}{% set type_choices = type_choices|merge({(type.value): type.label}) %}{% endfor %}
+                <div class="form-row align-items-end">
+                    {{ ui.filter('currency', 'Currency', filter.currency, currency_codes, 'All currencies') }}
+                    {{ ui.filter('country', 'Country', filter.country, countries, 'All countries') }}
+                    {{ ui.filter('type', 'Type', filter.type, type_choices, 'All types') }}
+                    {{ ui.filter('status', 'Status', filter.status, statuses, 'All') }}
+                    <div class="col-md-4 form-group mb-md-0">
+                        <button type="submit" class="btn btn-outline-primary">Apply</button>
+                        <a href="{{ path('plugin0_payment_methods') }}" class="btn btn-outline-secondary ml-2{{ query is empty ? ' disabled' }}"
+                           {% if query is empty %}aria-disabled="true" tabindex="-1"{% endif %}>Clear filters</a>
+                    </div>
+                </div>
+            </form>
+
+            {% if page.meta.total == 0 %}
+                <div class="plugin0-empty">
+                    <h4>No payment methods match these filters</h4>
+                    <a href="{{ path('plugin0_payment_methods') }}" class="btn btn-outline-secondary mt-3">Clear filters</a>
+                </div>
+            {% else %}
+                <div class="table-responsive">
+                    <table class="plugin0-table">
+                        <thead>
+                            <tr>
+                                {# Redosled nuđenja kupcu: broj iz forme, pa se i prikazuje kao broj; strana stiže sortirana po njemu. #}
+                                <th scope="col">Order</th>
+                                <th scope="col">Name</th>
+                                <th scope="col">Code</th>
+                                <th scope="col">Type</th>
+                                <th scope="col">Currencies</th>
+                                <th scope="col">Countries</th>
+                                <th scope="col">Active</th>
+                                <th scope="col"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for method in page.data %}
+                            {# Requirement 3.1: isključena metoda ostaje u listi, prigušena, cela u istoj sivoj. #}
+                            <tr class="{{ method.is_active ? '' : 'plugin0-off' }}">
+                                <td class="plugin0-num">{{ method.sort_order }}</td>
+                                <td class="{{ method.is_active ? 'font-weight-bold' : '' }}">{{ method.name }}</td>
+                                <td class="plugin0-mono">{{ method.code }}</td>
+                                {# Reč servisa za tip, ne sačuvana vrednost: šta tip znači odlučuje klasa koja ga sprovodi. #}
+                                <td title="{{ method.type_description }}">{{ method.type_label }}</td>
+                                <td>{{ ui.codes(method.currencies, 'currencies') }}</td>
+                                <td>{{ ui.codes(method.countries, 'countries') }}</td>
+                                <td>
+                                    {# Prekidač je sopstvena forma ka sopstvenoj ruti; skriveno polje nosi ciljano stanje. #}
+                                    <form method="post" action="{{ path('plugin0_payment_method_active', {id: method.id}) }}" class="plugin0-switch">
+                                        <input type="hidden" name="is_active" value="{{ method.is_active ? '0' : '1' }}">
+                                        <input type="hidden" name="back" value="{{ back }}">
+                                        <div class="custom-control custom-switch">
+                                            <input type="checkbox" class="custom-control-input" id="plugin0_active_{{ method.id }}" {{ method.is_active ? 'checked' }}>
+                                            <label class="custom-control-label" for="plugin0_active_{{ method.id }}"><span class="sr-only">{{ method.is_active ? 'Deactivate' : 'Activate' }}</span></label>
+                                        </div>
+                                        <noscript><button type="submit" class="btn btn-sm btn-outline-secondary mt-1">{{ method.is_active ? 'Deactivate' : 'Activate' }}</button></noscript>
+                                    </form>
+                                </td>
+                                <td class="text-right text-nowrap">
+                                    <a href="{{ path('plugin0_payment_method_edit', {id: method.id, back: back}) }}" class="plugin0-link">Edit</a>
+                                    {# Otvara samo potvrdu: brisanje pravo iz liste je greška (requirement 3.3). #}
+                                    <button type="button" class="plugin0-delete" data-name="{{ method.name }}"
+                                            data-action="{{ path('plugin0_payment_method_delete', {id: method.id}) }}">Delete</button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <nav aria-label="Pages" class="d-flex justify-content-between align-items-center mt-3">
+                    <span class="text-muted">
+                        {% if page.meta.from %}Showing {{ page.meta.from }}–{{ page.meta.to }} of {{ page.meta.total }}{% endif %}
+                    </span>
+                    <ul class="pagination mb-0">
+                        <li class="page-item{{ page.meta.page <= 1 ? ' disabled' }}">
+                            <a class="page-link" href="{{ path('plugin0_payment_methods', query|merge({page: max(1, min(page.meta.page - 1, page.meta.last_page))})) }}">Previous</a>
+                        </li>
+                        <li class="page-item disabled">
+                            <span class="page-link">Page {{ page.meta.page }} of {{ page.meta.last_page }}</span>
+                        </li>
+                        <li class="page-item{{ page.meta.page >= page.meta.last_page ? ' disabled' }}">
+                            <a class="page-link" href="{{ path('plugin0_payment_methods', query|merge({page: page.meta.page + 1})) }}">Next</a>
+                        </li>
+                    </ul>
+                </nav>
+            {% endif %}
+        {% endif %}
+    </div>
+</div>
+
+{# Potvrda brisanja (demo DeleteDialog): jedna za celu listu; JS upiše ime i adresu metode na koju je kliknuto.
+   Fokus ide na Cancel, da slučajan Enter ne obriše metodu. #}
+<div class="modal fade" id="plugin0_delete_dialog" tabindex="-1" role="dialog" aria-labelledby="plugin0_delete_title" aria-describedby="plugin0_delete_text">
+    <div class="modal-dialog" role="document">
+        <form method="post" action="" class="modal-content" id="plugin0_delete_form">
+            <input type="hidden" name="back" value="{{ back }}">
+            <div class="modal-header">
+                <h5 class="modal-title" id="plugin0_delete_title">Delete “<span id="plugin0_delete_name"></span>”?</h5>
+            </div>
+            <div class="modal-body" id="plugin0_delete_text">
+                <p class="mb-0">The payment method will be removed from the list, together with its currency and country assignments. <strong>This cannot be undone.</strong> To stop offering it without removing it, switch it off instead.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" id="plugin0_delete_cancel" data-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-danger">Delete</button>
             </div>
         </form>
-
-        {# Kad Core ne da katalog, lista je prazna zbog greške (poruka je u flash-u), ne zbog filtera. #}
-        {% if page.error is not null %}
-            <p class="text-muted mb-0">The payment methods could not be loaded.</p>
-        {% elseif page.total == 0 %}
-            <div class="text-center p-5 border">
-                <h4>No payment methods match these filters</h4>
-                <a href="{{ path('plugin0_payment_methods') }}" class="btn btn-outline-secondary mt-3">Clear filters</a>
-            </div>
-        {% elseif page.items is empty %}
-            <p class="text-muted mb-0">Page {{ page.page }} is past the last page, of {{ page.total }}.</p>
-        {% else %}
-            <div class="table-responsive">
-                <table class="plugin0-table">
-                    <thead>
-                        <tr>
-                            <th scope="col">Name</th>
-                            <th scope="col">Code</th>
-                            <th scope="col">Group</th>
-                            <th scope="col">Type</th>
-                            <th scope="col">Currencies</th>
-                            <th scope="col">Countries</th>
-                            <th scope="col">Active</th>
-                            <th scope="col"></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for method in page.items %}
-                        <tr class="{{ method.enabled ? '' : 'plugin0-off' }}">
-                            <td class="{{ method.enabled ? 'font-weight-bold' : '' }}">{{ method.name }}</td>
-                            <td class="plugin0-mono">{{ method.product_id }}</td>
-                            <td>{{ method.group_label }}</td>
-                            <td>{{ method.integration_types|join(', ') }}</td>
-                            <td>{{ ui.codes(method.currencies, 'currencies') }}</td>
-                            <td>{{ ui.codes(method.countries, 'countries') }}</td>
-                            <td>
-                                {# Prekidač je sopstvena forma ka sopstvenoj ruti; skriveno polje nosi ciljano stanje. #}
-                                <form method="post" action="{{ path('plugin0_payment_method_enable') }}" class="plugin0-enable">
-                                    <input type="hidden" name="product_id" value="{{ method.product_id }}">
-                                    <input type="hidden" name="enabled" value="{{ method.enabled ? '0' : '1' }}">
-                                    <input type="hidden" name="back" value="{{ back }}">
-                                    <div class="custom-control custom-switch">
-                                        <input type="checkbox" class="custom-control-input" id="plugin0_enable_{{ method.product_id }}" {{ method.enabled ? 'checked' }}>
-                                        <label class="custom-control-label" for="plugin0_enable_{{ method.product_id }}"><span class="sr-only">{{ method.enabled ? 'Active' : 'Inactive' }}</span></label>
-                                    </div>
-                                    <noscript><button type="submit" class="btn btn-sm btn-outline-secondary mt-1">{{ method.enabled ? 'Disable' : 'Enable' }}</button></noscript>
-                                </form>
-                            </td>
-                            <td class="text-right">
-                                <a href="{{ path('plugin0_payment_method_edit', {productId: method.product_id, back: back}) }}" style="text-decoration: underline; color: #25292e;">Edit</a>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        {% endif %}
-
-        {% if page.total > 0 %}
-        <nav aria-label="Pages" class="d-flex justify-content-between align-items-center mt-3">
-            <span class="text-muted">
-                {% if page.from %}Showing {{ page.from }}–{{ page.to }} of {{ page.total }}{% endif %}
-            </span>
-            <ul class="pagination mb-0">
-                <li class="page-item{{ page.page <= 1 ? ' disabled' }}">
-                    <a class="page-link" href="{{ path('plugin0_payment_methods', query|merge({page: max(1, min(page.page - 1, page.last_page))})) }}">Previous</a>
-                </li>
-                <li class="page-item disabled">
-                    <span class="page-link">Page {{ page.page }} of {{ page.last_page }}</span>
-                </li>
-                <li class="page-item{{ page.page >= page.last_page ? ' disabled' }}">
-                    <a class="page-link" href="{{ path('plugin0_payment_methods', query|merge({page: page.page + 1})) }}">Next</a>
-                </li>
-            </ul>
-        </nav>
-        {% endif %}
     </div>
 </div>
 {% endblock %}
@@ -157,7 +183,7 @@
 {{ parent() }}
 <script>
     // Prekidač šalje svoju formu čim se promeni; bez JS-a ostaje dugme iz noscript bloka.
-    document.querySelectorAll('.plugin0-enable .custom-control-input').forEach(function (input) {
+    document.querySelectorAll('.plugin0-switch .custom-control-input').forEach(function (input) {
         input.addEventListener('change', function () {
             this.disabled = true;
             this.form.submit();
@@ -192,5 +218,29 @@
             closeAll(event);
         }
     });
+    // Delete otvara potvrdu sa imenom metode; tek Delete u njoj šalje formu na rutu brisanja te metode.
+    (function () {
+        var dialog = document.getElementById('plugin0_delete_dialog');
+        var form = document.getElementById('plugin0_delete_form');
+        var name = document.getElementById('plugin0_delete_name');
+        var cancel = document.getElementById('plugin0_delete_cancel');
+        var hasModal = window.jQuery && typeof window.jQuery.fn.modal === 'function';
+        document.querySelectorAll('.plugin0-delete').forEach(function (button) {
+            button.addEventListener('click', function () {
+                form.action = button.dataset.action;
+                name.textContent = button.dataset.name;
+                if (hasModal) {
+                    window.jQuery(dialog).modal('show');
+                } else if (window.confirm('Delete “' + button.dataset.name + '”? This cannot be undone.')) {
+                    form.submit();
+                }
+            });
+        });
+        if (hasModal) {
+            window.jQuery(dialog).on('shown.bs.modal', function () {
+                cancel.focus();
+            });
+        }
+    })();
 </script>
 {% endblock %}

@@ -6,6 +6,12 @@
  * Klase plugin0-* koriste šabloni payment_methods.html.twig i payment_method.html.twig; text-muted, form-text,
  * custom-switch i is-invalid su Bootstrap klase iz istih šablona kojima se ovde menja boja ili veličina.
  */
+.plugin0-empty { border: 1px dashed #8c9ba3; padding: 2.5rem; text-align: center; }
+.plugin0-empty h4 { font-size: 1.125rem; font-weight: 500; color: #25292e; }
+.plugin0-num { font-variant-numeric: tabular-nums; }
+.plugin0-link { text-decoration: underline; color: #25292e; }
+.plugin0-delete { border: 0; background: none; padding: 0; margin-left: 1rem; text-decoration: underline; color: #c05c67; cursor: pointer; }
+.plugin0-delete:hover { color: #a3353f; }
 .plugin0-page { font-size: 1rem; color: #363a41; }
 .plugin0-page h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; }
 .plugin0-page .text-muted { color: #4f5962 !important; }
@@ -14,8 +20,8 @@
 .plugin0-table { width: 100%; font-size: 1rem; }
 .plugin0-table th { padding: 0.75rem 1.5rem 0.75rem 0; border: 0; border-bottom: 2px solid #8c9ba3; font-size: 0.875rem; letter-spacing: 0.05em; text-transform: uppercase; color: #25292e; font-weight: 700; white-space: nowrap; }
 .plugin0-table td { padding: 1.25rem 1.5rem 1.25rem 0; border: 0; border-bottom: 1px solid #c9d2d6; vertical-align: middle; color: #363a41; }
-/* Isključena metoda: običan (ne podebljan) tekst, bez providnosti, jer je većina kataloga isključena pa bi cela tabela bila bleda. */
-.plugin0-table tr.plugin0-off td { font-weight: 400; color: #4f5962; }
+/* Isključena metoda (requirement 3.1): ceo red prigušen, kao demo opacity-50, običan (ne podebljan) tekst. */
+.plugin0-table tr.plugin0-off td { font-weight: 400; color: #4f5962; opacity: 0.5; }
 .plugin0-table .custom-switch { transform: scale(1.25); transform-origin: left center; }
 .plugin0-tag { display: inline-flex; align-items: center; justify-content: center; min-width: 3rem; padding: 0.125rem 0.5rem; margin-right: 0.25rem; border: 1px solid #8c9ba3; border-radius: 9999px; background: #eef1f2; font-family: SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9375rem; font-weight: 600; color: #25292e; }
 .plugin0-tag.plugin0-off { opacity: 0.6; text-decoration: line-through; }

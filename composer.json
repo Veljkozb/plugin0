@@ -2,9 +2,22 @@
     "require": {
         "wl-online-payments-direct/plugin-core-base": "1.0.7"
     },
+    "require-dev": {
+        "phpunit/phpunit": "^11.5",
+        "psr/log": "^1.1"
+    },
     "autoload": {
         "psr-4": {
-            "Plugin0\\": "src/"
+            "Plugin0\\": "src/",
+            "Logeecom\\": "lib/Logeecom/"
         }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "prepend-autoloader": false
     }
 }

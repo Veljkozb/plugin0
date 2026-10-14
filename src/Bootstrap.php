@@ -4,7 +4,7 @@ namespace Plugin0;
 
 use Plugin0\Infrastructure\Repository\BaseRepository;
 use Plugin0\Infrastructure\Repository\LogsRepository;
-use Plugin0\PaymentMethods\PaymentMethodRestrictionEntity;
+use Plugin0\Entity\PaymentMethodEntity;
 use WOP\OnlinePayments\Core\Bootstrap\BootstrapComponent;
 use WOP\OnlinePayments\Core\Bootstrap\Configuration\Configuration as CoreConfiguration;
 use WOP\OnlinePayments\Core\Bootstrap\DataAccess\Connection\ConnectionConfigEntity;
@@ -134,8 +134,8 @@ class Bootstrap extends BootstrapComponent
             PaymentTransactionLockEntity::class,
             ProductTypeEntity::class,
             TokenEntity::class,
-            // Jedini entitet koji nije Core-ov: zemlje i valute metode plaćanja, vidi PaymentMethodRestrictionEntity.
-            PaymentMethodRestrictionEntity::class,
+            // Jedini entitet koji nije Core-ov: metoda plaćanja iz demo projekta, vidi Entity\PaymentMethodEntity.
+            PaymentMethodEntity::class,
         ];
 
         foreach ($entities as $entityClass) {

@@ -1,90 +1,28 @@
 {#
-  Forma jedne metode plaćanja, po izgledu dema (resources/js/admin/PaymentMethodForm.jsx, MultiSelect.jsx): naslov je
-  ime metode, polja jedno ispod drugog istim redom kao tamo (Name, Code, Type, Currencies, Countries, ... Active),
-  Save i Cancel koji pita pre odbacivanja izmena. Razlike dolaze od Worldline-a: Code je ID proizvoda i ne menja
-  se; Type se bira samo za kartice (iFrame ili Redirect), za ostale ga daje katalog; Sort order ne postoji.
+  Forma jedne metode plaćanja, po demu (resources/js/admin/PaymentMethodForm.jsx, MultiSelect.jsx): naslov "New payment
+  method" ili ime metode, polja jedno ispod drugog istim redom kao tamo (Name, Code, Type, Currencies, Countries,
+  Sort order, Active), Save i Cancel koji pita pre odbacivanja izmena. Ista forma za dodavanje i izmenu; pravila
+  proverava kontroler (PaymentMethodForm), pa je poruka ispod polja uvek ona sa servera, a unete vrednosti ostaju.
 
-  Posle demo polja idu Core polja koja demo nema: Template, pa deo po vrsti metode (kartice, Hosted Checkout,
-  3-D Secure, bankarski transfer, Intersolve, Oney, SEPA, deskriptor), kako ih PaymentMethodRequest prima. Koji
-  delovi se vide kaže PaymentMethodCatalog::sections(). Ime (i naziv sačuvane kartice) je po jeziku prodavnice:
-  podrazumevani jezik je glavno polje, ostali su sklopljeni ispod njega.
+  Valute i zemlje se biraju kao demo MultiSelect: čipovi sa × i jedan select "Add…" koji nudi samo još neizabrane
+  kodove; svaki čip nosi skriveno polje currencies[] odnosno countries[].
 
-  Zemlje i valute su ograničenje koje plugin0 čuva sam (nije Core polje); biraju se kao u demu: čipovi sa × i
-  jedan select "Add…" koji nudi samo još neizabrane kodove. Svaki čip nosi skriveno polje countries[] / currencies[].
-  Valuta mora biti bar jedna; metoda bez sopstvene liste dolazi sa Default currency (Settings) već izabranom.
-
-  Kontroler šalje: product_id, title, group_label, integration_types, sections, languages (kod => naziv, podrazumevani
-  prvi), form (vrednosti polja), errors (poruka po polju), choices (countries, currencies: kod => name, in_shop),
-  default_currency (ISO kod sa Settings stranice), options (liste za menije), limits, back, back_query.
+  Kontroler šalje: id (null pri dodavanju), title, form (name, code, type, currencies, countries, sort_order,
+  is_active), errors (poruka po polju), types (value, label, description), currencies i countries (kod => naziv),
+  max_sort_order, worldline_products (Worldline ID => naziv, ponuda za Code), back, back_query.
 #}
 {% extends '@Modules/plugin0/views/templates/admin/layout.html.twig' %}
 
-{% macro text(name, label, value, error, help, attrs) %}
+{% macro text(name, label, value, error, maxlength, extra_class) %}
 <div class="form-group plugin0-field">
     <label for="{{ name }}">{{ label }}</label>
-    <input type="text" class="form-control{{ error ? ' is-invalid' }}" id="{{ name }}" name="{{ name }}" value="{{ value }}" {{ attrs|default('')|raw }}>
+    <input type="text" class="form-control{{ extra_class ? ' ' ~ extra_class }}{{ error ? ' is-invalid' }}" id="{{ name }}" name="{{ name }}" value="{{ value }}" maxlength="{{ maxlength }}">
     {% if error %}<div class="invalid-feedback">{{ error }}</div>{% endif %}
-    {% if help %}<small class="form-text text-muted">{{ help }}</small>{% endif %}
 </div>
 {% endmacro %}
 
-{% macro number(name, label, value, error, help, attrs) %}
-<div class="form-group plugin0-field">
-    <label for="{{ name }}">{{ label }}</label>
-    <input type="number" class="form-control{{ error ? ' is-invalid' }}" id="{{ name }}" name="{{ name }}" value="{{ value }}" style="max-width: 10rem;" {{ attrs|default('')|raw }}>
-    {% if error %}<div class="invalid-feedback">{{ error }}</div>{% endif %}
-    {% if help %}<small class="form-text text-muted">{{ help }}</small>{% endif %}
-</div>
-{% endmacro %}
-
-{% macro select(name, label, value, choices, error, help) %}
-<div class="form-group plugin0-field">
-    <label for="{{ name }}">{{ label }}</label>
-    <select class="form-control{{ error ? ' is-invalid' }}" id="{{ name }}" name="{{ name }}">
-        {% for key, text in choices %}
-        <option value="{{ key }}" {{ value == key ? 'selected' }}>{{ text }}</option>
-        {% endfor %}
-    </select>
-    {% if error %}<div class="invalid-feedback">{{ error }}</div>{% endif %}
-    {% if help %}<small class="form-text text-muted">{{ help }}</small>{% endif %}
-</div>
-{% endmacro %}
-
-{% macro checkbox(name, label, checked, help) %}
-<div class="form-group plugin0-field">
-    <div class="form-check">
-        <input type="checkbox" class="form-check-input" id="{{ name }}" name="{{ name }}" value="1" {{ checked ? 'checked' }}>
-        <label class="form-check-label" for="{{ name }}">{{ label }}</label>
-    </div>
-    {% if help %}<small class="form-text text-muted">{{ help }}</small>{% endif %}
-</div>
-{% endmacro %}
-
-{# Polje po jeziku prodavnice: podrazumevani jezik je glavno polje (jedino obavezno), ostali su sklopljeni ispod. #}
-{% macro by_language(field, label, values, languages, error, help) %}
-{% set default_code = languages|keys|first %}
-<div class="form-group plugin0-field">
-    <label for="{{ field }}_{{ default_code }}">{{ label }}</label>
-    <input type="text" class="form-control{{ error ? ' is-invalid' }}" id="{{ field }}_{{ default_code }}" name="{{ field }}[{{ default_code }}]" value="{{ values[default_code]|default('') }}">
-    {% if error %}<div class="invalid-feedback">{{ error }}</div>{% endif %}
-    {% if help %}<small class="form-text text-muted">{{ help }}</small>{% endif %}
-    {% if languages|length > 1 %}
-    <details class="mt-2">
-        <summary class="text-muted small">Other languages</summary>
-        {% for code, language in languages %}{% if code != default_code %}
-        <div class="input-group input-group-sm mt-2">
-            <div class="input-group-prepend"><span class="input-group-text plugin0-mono" style="min-width: 3.5rem;">{{ code }}</span></div>
-            <input type="text" class="form-control" id="{{ field }}_{{ code }}" name="{{ field }}[{{ code }}]" value="{{ values[code]|default('') }}"
-                   aria-label="{{ label }} ({{ language }})" placeholder="{{ language }}, optional">
-        </div>
-        {% endif %}{% endfor %}
-    </details>
-    {% endif %}
-</div>
-{% endmacro %}
-
-{# Izbor kodova kao demo MultiSelect: čipovi sa ×, pa select koji nudi samo neizabrane. Kod isključen u prodavnici ostaje štikliran, precrtan. #}
-{% macro multiselect(field, label, selected, choices, error, help) %}
+{# Izbor kodova kao demo MultiSelect: čipovi sa ×, pa select koji nudi samo neizabrane. #}
+{% macro multiselect(field, label, selected, choices, error) %}
 <div class="form-group plugin0-field">
     <label for="{{ field }}_add">{{ label }}</label>
     {% if choices is empty %}
@@ -92,18 +30,19 @@
     {% else %}
         <div class="plugin0-tags{{ error ? ' is-invalid' }}" data-field="{{ field }}">
             {% for code in selected %}
-            <span class="plugin0-tag{{ choices[code] is defined and not choices[code].in_shop ? ' plugin0-off' }}" data-code="{{ code }}" {% if choices[code] is defined and not choices[code].in_shop %}title="Disabled in the shop"{% endif %}>{{ code }}<button type="button" aria-label="Remove {{ code }}">×</button><input type="hidden" name="{{ field }}[]" value="{{ code }}"></span>
+            <span class="plugin0-tag" data-code="{{ code }}">{{ code }}<button type="button" aria-label="Remove {{ code }}">×</button><input type="hidden" name="{{ field }}[]" value="{{ code }}"></span>
             {% endfor %}
             <select id="{{ field }}_add" aria-label="Add {{ label|lower }}">
                 <option value="">{{ selected|length == choices|length ? 'All selected' : 'Add…' }}</option>
-                {% for code, choice in choices %}
-                <option value="{{ code }}" {{ code in selected ? 'hidden disabled' }}>{{ code }} · {{ choice.name }}</option>
+                {# "*" nikad ne stiže na server: JS ga pretvori u čipove svih preostalih kodova. #}
+                <option value="*">All {{ label|lower }}</option>
+                {% for code, name in choices %}
+                <option value="{{ code }}" {{ code in selected ? 'hidden disabled' }}>{{ code }} · {{ name }}</option>
                 {% endfor %}
             </select>
         </div>
         {% if error %}<div class="invalid-feedback d-block">{{ error }}</div>{% endif %}
     {% endif %}
-    {% if help %}<small class="form-text text-muted">{{ help }}</small>{% endif %}
 </div>
 {% endmacro %}
 
@@ -111,112 +50,65 @@
 {% import _self as field %}
 <div class="card">
     <div class="card-body p-4 plugin0-page">
-        <h1>
-            {{ title }}
-            <small>{{ group_label }} · {{ integration_types|join(', ') }}</small>
-        </h1>
+        <h1>{{ title }}</h1>
 
-        <form method="post" action="{{ path('plugin0_payment_method_edit', {productId: product_id}) }}" id="plugin0_method_form" novalidate style="max-width: 48rem;">
+        <form method="post" action="{{ id is null ? path('plugin0_payment_method_create') : path('plugin0_payment_method_edit', {id: id}) }}"
+              id="plugin0_method_form" novalidate style="max-width: 42rem;">
             <input type="hidden" name="back" value="{{ back }}">
 
-            {{ field.by_language('name', 'Name', form.name, languages, errors.name|default(''), 'What the customer sees at checkout. A language left empty gets the Worldline default name when saved.') }}
+            {{ field.text('name', 'Name', form.name, errors.name|default(''), 255, '') }}
 
+            {# Code: slobodan unos, a pored njega meni sa Worldline proizvodima iz Core-a (ID i naziv) koji upisuje ID u polje. #}
             <div class="form-group plugin0-field">
                 <label for="code">Code</label>
-                <input type="text" class="form-control plugin0-mono" id="code" value="{{ product_id }}" readonly>
-                <small class="form-text text-muted">Worldline payment product ID; it cannot be changed.</small>
+                <div class="form-row">
+                    <div class="col-sm-5">
+                        <input type="text" class="form-control plugin0-mono{{ errors.code is defined ? ' is-invalid' }}" id="code" name="code"
+                               value="{{ form.code }}" maxlength="64" autocomplete="off">
+                        {% if errors.code is defined %}<div class="invalid-feedback">{{ errors.code }}</div>{% endif %}
+                    </div>
+                    <div class="col-sm-7">
+                        <select class="form-control" id="plugin0_worldline_product" aria-label="Worldline payment product">
+                            <option value="">Pick a Worldline product…</option>
+                            {% for product_id, product_name in worldline_products %}
+                            <option value="{{ product_id }}">{{ product_id }} · {{ product_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <small class="form-text text-muted">Worldline payment product ID. Pick one from the list or type your own.</small>
             </div>
 
+            {# Jedno radio dugme po tipu koji servis nudi, sa rečima servisa pored: šablon ne zna nijedan tip po imenu. #}
             <fieldset class="form-group plugin0-field">
                 <legend>Type</legend>
-                {% if sections.cards %}
-                    {% for key, type in options.flow_types %}
-                    <div class="form-check plugin0-radio mb-2">
-                        <input type="radio" class="form-check-input" id="flow_type_{{ key }}" name="flow_type" value="{{ key }}" {{ form.flow_type == key ? 'checked' }}>
-                        <label class="form-check-label" for="flow_type_{{ key }}">{{ type.label }}<small>{{ type.description }}</small></label>
-                    </div>
-                    {% endfor %}
-                    {% if errors.flow_type is defined %}<div class="invalid-feedback d-block">{{ errors.flow_type }}</div>{% endif %}
-                {% else %}
-                    <div class="form-control-plaintext">{{ integration_types|join(', ') }}</div>
-                    <small class="form-text text-muted">Set by the Worldline catalogue for this method.</small>
-                {% endif %}
+                {% for type in types %}
+                <div class="form-check plugin0-radio mb-2">
+                    <input type="radio" class="form-check-input{{ errors.type is defined ? ' is-invalid' }}" id="type_{{ type.value }}" name="type" value="{{ type.value }}" {{ form.type == type.value ? 'checked' }}>
+                    <label class="form-check-label" for="type_{{ type.value }}">{{ type.label }}<small>{{ type.description }}</small></label>
+                </div>
+                {% endfor %}
+                {% if errors.type is defined %}<div class="invalid-feedback d-block">{{ errors.type }}</div>{% endif %}
             </fieldset>
 
-            {{ field.multiselect('currencies', 'Currencies', form.currencies, choices.currencies, errors.currencies|default(''), 'At least one. The default currency from the Settings page (' ~ default_currency ~ ') is added here whenever it changes.') }}
+            {{ field.multiselect('currencies', 'Currencies', form.currencies, currencies, errors.currencies|default('')) }}
 
-            {{ field.multiselect('countries', 'Countries', form.countries, choices.countries, errors.countries|default(''), 'Leave empty to offer the method in every country of the shop. Checked against the billing address.') }}
+            {{ field.multiselect('countries', 'Countries', form.countries, countries, errors.countries|default('')) }}
 
-            {{ field.text('template', 'Template', form.template, errors.template|default(''), 'Hosted Checkout page template (variant) ID from the Worldline Merchant Portal. Leave empty to use the one from the payment settings.') }}
+            <div class="form-group plugin0-field">
+                <label for="sort_order">Sort order</label>
+                <input type="number" class="form-control plugin0-num{{ errors.sort_order is defined ? ' is-invalid' }}" id="sort_order" name="sort_order"
+                       value="{{ form.sort_order }}" min="1" max="{{ max_sort_order }}" step="1" style="max-width: 10rem;">
+                {% if errors.sort_order is defined %}<div class="invalid-feedback">{{ errors.sort_order }}</div>{% endif %}
+            </div>
 
-            {% if sections.payment_action %}
-                {{ field.select('payment_action', 'Payment action', form.payment_action, options.payment_actions, errors.payment_action|default(''), 'Authorize only reserves the amount; the capture is done later from the order. Authorize and capture takes the money at once.') }}
-            {% endif %}
-
-            {% if sections.cards %}
-                <hr>
-                <h4 class="h6 text-uppercase text-muted">Cards</h4>
-                {{ field.by_language('vault_titles', 'Saved card title', form.vault_titles, languages, errors.vault_titles|default(''), 'Label of a saved card the customer can pay with again.') }}
-                {{ field.select('authorization_mode', 'Authorization mode', form.authorization_mode, options.authorization_modes, errors.authorization_mode|default(''), 'Final authorization blocks the exact amount; pre-authorization allows the captured amount to differ.') }}
-                {{ field.checkbox('enable_group_cards', 'Group card brands', form.enable_group_cards, 'Show one "Credit cards" option instead of one option per brand.') }}
-            {% endif %}
-
-            {% if sections.hosted_checkout %}
-                <hr>
-                <h4 class="h6 text-uppercase text-muted">Hosted Checkout</h4>
-                {{ field.text('logo', 'Logo URL', form.logo, errors.logo|default(''), 'Logo shown for this method. Leave empty for the plugin default.') }}
-                {{ field.checkbox('enable_group_cards', 'Group card brands', form.enable_group_cards, 'Show one "Credit cards" option on the Hosted Checkout page instead of one option per brand.') }}
-            {% endif %}
-
-            {% if sections.three_ds %}
-                <hr>
-                <h4 class="h6 text-uppercase text-muted">3-D Secure</h4>
-                {{ field.checkbox('enable_3ds', 'Enable 3-D Secure', form.enable_3ds) }}
-                {{ field.checkbox('enforce_strong_authentication', 'Enforce strong customer authentication', form.enforce_strong_authentication, 'Ask the issuer for a challenge on every payment.') }}
-                {{ field.checkbox('enable_3ds_exemption', 'Request 3-D Secure exemption', form.enable_3ds_exemption, 'Ask the issuer to skip authentication for payments under the limit below.') }}
-                {{ field.select('exemption_type', 'Exemption type', form.exemption_type, options.exemption_types, errors.exemption_type|default('')) }}
-                {{ field.number('exemption_limit', 'Exemption limit (EUR)', form.exemption_limit, errors.exemption_limit|default(''), 'Leave empty for the Core default of 30.00 EUR.', 'min="0.01" step="0.01"') }}
-            {% endif %}
-
-            {% if sections.bank_transfer %}
-                <hr>
-                <h4 class="h6 text-uppercase text-muted">Bank Transfer</h4>
-                {{ field.checkbox('instant_payment', 'Instant payment', form.instant_payment) }}
-            {% endif %}
-
-            {% if sections.intersolve %}
-                <hr>
-                <h4 class="h6 text-uppercase text-muted">Intersolve</h4>
-                {{ field.number('session_timeout', 'Session timeout (minutes)', form.session_timeout, errors.session_timeout|default(''), 'From ' ~ limits.session_timeout_min ~ ' to ' ~ limits.session_timeout_max ~ '.', 'min="' ~ limits.session_timeout_min ~ '" max="' ~ limits.session_timeout_max ~ '" step="1"') }}
-                {{ field.number('intersolve_product_id', 'Intersolve product ID', form.intersolve_product_id, errors.intersolve_product_id|default(''), 'From ' ~ limits.intersolve_product_id_min ~ ' to ' ~ limits.intersolve_product_id_max ~ '.', 'min="' ~ limits.intersolve_product_id_min ~ '" max="' ~ limits.intersolve_product_id_max ~ '" step="1"') }}
-            {% endif %}
-
-            {% if sections.oney %}
-                <hr>
-                <h4 class="h6 text-uppercase text-muted">Oney</h4>
-                {{ field.text('payment_option', 'Payment option', form.payment_option, errors.payment_option|default(''), 'Oney payment option code agreed with Oney.') }}
-            {% endif %}
-
-            {% if sections.sepa %}
-                <hr>
-                <h4 class="h6 text-uppercase text-muted">SEPA Direct Debit</h4>
-                {{ field.select('recurrence_type', 'Recurrence type', form.recurrence_type, options.recurrence_types, errors.recurrence_type|default('')) }}
-                {{ field.select('signature_type', 'Mandate signature type', form.signature_type, options.signature_types, errors.signature_type|default('')) }}
-            {% endif %}
-
-            {% if sections.descriptor %}
-                <hr>
-                <h4 class="h6 text-uppercase text-muted">Descriptor</h4>
-                {{ field.text('descriptor', 'Descriptor', form.descriptor, errors.descriptor|default(''), 'Shown on the customer\'s statement, at most ' ~ limits.descriptor_max ~ ' characters.', 'maxlength="' ~ limits.descriptor_max ~ '"') }}
-            {% endif %}
-
-            {# Prekidač i reč pored njega, kao demo ActiveSwitch; polje je i dalje "enabled" = 1. #}
+            {# Prekidač i reč pored njega, kao demo ActiveSwitch; polje je is_active = 1. #}
             <div class="d-flex align-items-center plugin0-field" style="gap: 0.75rem;">
                 <div class="custom-control custom-switch">
-                    <input type="checkbox" class="custom-control-input" id="enabled" name="enabled" value="1" {{ form.enabled ? 'checked' }}>
-                    <label class="custom-control-label" for="enabled"><span class="sr-only">Active</span></label>
+                    <input type="checkbox" class="custom-control-input" id="is_active" name="is_active" value="1" {{ form.is_active ? 'checked' }}>
+                    <label class="custom-control-label" for="is_active"><span class="sr-only">Active</span></label>
                 </div>
-                <span id="plugin0_active_text">{{ form.enabled ? 'Active' : 'Inactive' }}</span>
+                <span id="plugin0_active_text">{{ form.is_active ? 'Active' : 'Inactive' }}</span>
             </div>
 
             <div class="plugin0-actions">
@@ -244,9 +136,18 @@
             }
         });
 
-        var enabled = document.getElementById('enabled');
-        enabled.addEventListener('change', function () {
-            document.getElementById('plugin0_active_text').textContent = enabled.checked ? 'Active' : 'Inactive';
+        // Izbor Worldline proizvoda upisuje njegov ID u polje Code; meni se vraća na početnu stavku.
+        var product = document.getElementById('plugin0_worldline_product');
+        product.addEventListener('change', function () {
+            if (product.value !== '') {
+                document.getElementById('code').value = product.value;
+                product.value = '';
+            }
+        });
+
+        var active = document.getElementById('is_active');
+        active.addEventListener('change', function () {
+            document.getElementById('plugin0_active_text').textContent = active.checked ? 'Active' : 'Inactive';
         });
 
         // Izbor kodova kao demo MultiSelect: select dodaje čip i vraća se na "Add…", × skida čip i vraća kod u select.
@@ -255,7 +156,7 @@
             var select = box.querySelector('select');
 
             function refreshPlaceholder() {
-                var left = select.querySelectorAll('option:not([hidden]):not([value=""])').length;
+                var left = select.querySelectorAll('option:not([hidden]):not([value=""]):not([value="*"])').length;
                 select.options[0].textContent = left === 0 ? 'All selected' : 'Add…';
                 select.disabled = left === 0;
             }
@@ -270,17 +171,7 @@
                 refreshPlaceholder();
             }
 
-            box.addEventListener('click', function (event) {
-                if (event.target.tagName === 'BUTTON') {
-                    remove(event.target.parentNode);
-                }
-            });
-
-            select.addEventListener('change', function () {
-                var code = select.value;
-                if (code === '') {
-                    return;
-                }
+            function add(code) {
                 var tag = document.createElement('span');
                 tag.className = 'plugin0-tag';
                 tag.dataset.code = code;
@@ -299,6 +190,27 @@
                 var option = select.querySelector('option[value="' + code + '"]');
                 option.hidden = true;
                 option.disabled = true;
+            }
+
+            box.addEventListener('click', function (event) {
+                if (event.target.tagName === 'BUTTON') {
+                    remove(event.target.parentNode);
+                }
+            });
+
+            // Jedan kod dodaje jedan čip; "All" dodaje čipove za sve kodove koji još nisu izabrani.
+            select.addEventListener('change', function () {
+                var code = select.value;
+                if (code === '') {
+                    return;
+                }
+                if (code === '*') {
+                    select.querySelectorAll('option:not([hidden]):not([value=""]):not([value="*"])').forEach(function (option) {
+                        add(option.value);
+                    });
+                } else {
+                    add(code);
+                }
                 select.value = '';
                 refreshPlaceholder();
             });

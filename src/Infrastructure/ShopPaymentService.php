@@ -3,19 +3,17 @@
 namespace Plugin0\Infrastructure;
 
 use Context;
-use Plugin0\PaymentMethods\PaymentMethodRestrictionRepository;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\Payment\ShopPaymentService as ShopPaymentServiceInterface;
-use WOP\OnlinePayments\Core\BusinessLogic\Domain\Multistore\StoreContext;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\PaymentMethod\PaymentMethod;
 use WOP\OnlinePayments\Core\Infrastructure\Logger\Logger;
 
 /**
- * Šta PrestaShop strana radi kad admin sačuva, uključi ili obriše metodu plaćanja. Core zove ove metode posle
- * sopstvenog upisa (AdminConfig PaymentController::save/enable) i pri disconnect-u (DisconnectService).
+ * Šta PrestaShop strana radi kad Core sačuva, uključi ili obriše svoja podešavanja Worldline metode plaćanja. Core
+ * zove ove metode posle sopstvenog upisa (AdminConfig PaymentController::save/enable) i pri disconnect-u
+ * (DisconnectService).
  *
- * Jedino sopstveno stanje metoda u plugin0 su zemlje i valute (PaymentMethodRestrictionEntity), pa ih
- * deletePaymentMethods briše zajedno sa Core-ovim podešavanjima metoda. Ostalo je zapis u log, kao trag admin radnje
- * (demo je svaku radnju nad metodom logovao na INFO sa korisnikom).
+ * Plugin0 tu nema šta da upiše: metode plaćanja koje admin pravi (Logeecom\PaymentMethods) nisu vezane za
+ * Worldline katalog ni za konekciju, pa ih disconnect ne dira. Ostaje zapis u log, kao trag radnje.
  */
 class ShopPaymentService implements ShopPaymentServiceInterface
 {
@@ -23,7 +21,7 @@ class ShopPaymentService implements ShopPaymentServiceInterface
 
     public function savePaymentMethod(PaymentMethod $paymentMethod): void
     {
-        Logger::logInfo('Payment method saved', self::COMPONENT, LoggerService::context([
+        Logger::logInfo('Worldline payment method settings saved', self::COMPONENT, LoggerService::context([
             'productId' => $paymentMethod->getProductId()->getId(),
             'name' => $paymentMethod->getName()->getDefaultTranslation()->getMessage(),
             'enabled' => $paymentMethod->isEnabled(),
@@ -33,7 +31,7 @@ class ShopPaymentService implements ShopPaymentServiceInterface
 
     public function enable(string $paymentProductId, bool $enabled): void
     {
-        Logger::logInfo($enabled ? 'Payment method enabled' : 'Payment method disabled', self::COMPONENT, LoggerService::context([
+        Logger::logInfo($enabled ? 'Worldline payment method enabled' : 'Worldline payment method disabled', self::COMPONENT, LoggerService::context([
             'productId' => $paymentProductId,
             'employeeId' => $this->employeeId(),
         ]));
@@ -42,9 +40,7 @@ class ShopPaymentService implements ShopPaymentServiceInterface
     /** Core je zove pri disconnect-u, unutar StoreContext-a prodavnice koja se odvezuje. */
     public function deletePaymentMethods(string $mode): void
     {
-        (new PaymentMethodRestrictionRepository(StoreContext::getInstance()->getStoreId()))->deleteByMode($mode);
-
-        Logger::logInfo('Payment methods deleted', self::COMPONENT, LoggerService::context([
+        Logger::logInfo('Worldline payment method settings deleted', self::COMPONENT, LoggerService::context([
             'mode' => $mode,
             'employeeId' => $this->employeeId(),
         ]));

@@ -227,7 +227,13 @@ instalira pakete iz `composer.lock`:
 - `wl-online-payments-direct/sdk-php` 6.2.0
 - `robtimus/multipart` 1.0.1
 
-Pravi i `vendor/autoload.php` sa mapiranjem `Plugin0\` → `src/`.
+Pravi i `vendor/autoload.php` sa mapiranjima `Plugin0\` → `src/` i `Logeecom\` → `lib/Logeecom/` (demo kod), plus
+`Tests\` → `tests/` za unit testove. Dev paketi (`phpunit/phpunit` 11, `psr/log` 1.1) instaliraju se composer-om iz
+kontejnera (`docker exec -u 1000:1000 -w .../modules/plugin0 logeecom_dev composer install`), da `vendor/` ostane u
+vlasnistvu korisnika iz WSL-a. `composer.json` ima `"config": {"prepend-autoloader": false}` (kao Packlink modul):
+autoloader modula se registruje *posle* PrestaShop-ovog, pa klasa koju imaju oba (na primer `PhpParser\ParserFactory`,
+koju phpunit vuce u verziji 5, a PrestaShop ima verziju 4 i zove je u Module Manager-u) dolazi iz PrestaShop vendora.
+Bez toga Module Manager puca sa "undefined method create of class PhpParser\ParserFactory".
 
 **Korak 5: browser.**
 1. Otvori `https://8-2-4.prestashop.veljko.ngrok.app/admin174kob088ranecckhxg/`.
@@ -985,29 +991,43 @@ PHP i PrestaShop ne znaju za `/var/lib/mysql`. Znaju samo `127.0.0.1:3306`, `roo
 
 ### 14.1 Sta je plugin0
 
-PrestaShop 8 modul (`name = plugin0`, `tab = payments_gateways`, `version = 1.0.0`,
-`ps_versions_compliancy` od 8.0.0). Gradi Worldline Online Payments integraciju od nule, na Core biblioteci
-`wl-online-payments-direct/plugin-core-base` 1.0.7. Namespace je `Plugin0\` → `src/`.
+PrestaShop 8 modul placanja (`name = plugin0`, `tab = payments_gateways`, `version = 1.0.0`,
+`ps_versions_compliancy` od 8.0.0; `Plugin0 extends PaymentModule`). Gradi Worldline Online Payments integraciju od
+nule, na Core biblioteci `wl-online-payments-direct/plugin-core-base` 1.0.7. Dva namespace-a: `Plugin0\` → `src/`
+(PrestaShop i Core strana) i `Logeecom\` → `lib/Logeecom/` (poslovni sloj demo projekta
+`/home/veljkozbiljic/laravel-docker/src`, kopiran bez izmena; vidi 14.6).
 
 ### 14.2 Fajlovi
 
 ```
 plugin0/
-├── plugin0.php                     ← glavna klasa modula (Plugin0 extends Module)
-├── composer.json, composer.lock    ← zavisnosti i PSR-4 autoload
-├── vendor/                         ← composer install (u .gitignore)
+├── plugin0.php                     ← glavna klasa modula (Plugin0 extends PaymentModule): install, hook-ovi
+├── composer.json, composer.lock    ← zavisnosti i PSR-4 autoload (Plugin0\ → src/, Logeecom\ → lib/Logeecom/)
+├── phpunit.xml                     ← demo unit testovi (tests/Unit); pokrecu se u kontejneru (14.6)
+├── vendor/                         ← composer install (u .gitignore); dev paketi phpunit i psr/log
 ├── config/
 │   ├── routes.yml                  ← Symfony admin rute
 │   └── brand.json                  ← Worldline endpoint-i (live i test), predaje se Core-u
+├── controllers/front/payment.php   ← front controller "payment": stranica posle izbora metode na checkout-u
+├── lib/Logeecom/                   ← demo projekat, poslovni sloj bez framework-a, bajt-identican demo src/
+│   ├── Configuration/              ← jos nije povezan: Configuration stranica ostaje na Core-u do Worldline koraka
+│   ├── Logs/                       ← jos nije povezan: Logs stranica cita ps_log kroz LogReader (tiket trazi kontekst)
+│   ├── PaymentMethods/             ← domen, servis, interfejsi repozitorijuma, tipovi Redirect i iFrame
+│   └── Settings/                   ← domen, servis, interfejs skladista, LogLevelApplierInterface
 ├── src/
 │   ├── Bootstrap.php               ← podize Core, registruje servise i repozitorijume
-│   ├── Configuration.php           ← Core Configuration za PrestaShop
+│   ├── Configuration.php           ← Core Configuration za PrestaShop (i kljucevi podesavanja)
+│   ├── Services.php                ← fabrika demo servisa: koja implementacija stoji iza kog demo interfejsa
+│   ├── Adapter/                    ← demo interfejsi nad Core-om i PrestaShop-om (repozitorijumi, logger, applier)
+│   ├── Checkout/                   ← AvailablePaymentMethods: koje metode vaze za korpu
 │   ├── Controller/Admin/           ← Symfony kontroleri admin stranica
-│   ├── Infrastructure/             ← implementacije Core interfejsa + Installer + repozitorijumi
-│   ├── Settings/                   ← pravila Settings stranice
-│   └── PaymentMethods/             ← pravila Payment methods stranice
+│   ├── Entity/                     ← PaymentMethodEntity: demo metoda kao Core entitet u ps_plugin0_entity
+│   ├── Form/                       ← PaymentMethodForm: pravila forme iz demo Form Request-a
+│   └── Infrastructure/             ← implementacije Core interfejsa + Installer + BaseRepository + LogReader
+├── tests/                          ← demo unit testovi i in-memory repozitorijumi (Tests\ → tests/)
 ├── views/
-│   ├── templates/admin/*.html.twig ← sabloni stranica
+│   ├── templates/admin/*.html.twig ← sabloni admin stranica
+│   ├── templates/front/payment.tpl ← sablon front controller-a "payment"
 │   └── img/                        ← placeholder logo; logotipi metoda u payment-methods/
 └── docs/                           ← CORE.md i ovaj dokument
 ```
@@ -1016,13 +1036,18 @@ plugin0/
 
 | Metoda | Kada je PrestaShop zove | Sta radi |
 |---|---|---|
-| `__construct()` | kad god ucitava modul | ime, verzija, autor, opis |
-| `install()` | dugme Install | `Bootstrap::boot()`, `parent::install()`, `Installer::createTables()`, `registerHook('actionDispatcherBefore')` |
+| `__construct()` | kad god ucitava modul | ime, verzija, autor, opis; `currencies = true`, `currencies_mode = 'checkbox'`, `controllers = ['payment']` (svojstva koja `PaymentModule` trazi) |
+| `install()` | dugme Install | `Bootstrap::boot()`, `parent::install()` (`PaymentModule::install`: i redovi u `module_currency`, `module_country`, `module_carrier`), `Installer::createTables()`, `registerHook('actionDispatcherBefore')`, `registerHook('paymentOptions')` |
 | `uninstall()` | dugme Uninstall | `Bootstrap::boot()`, `Installer::dropTables()` (**brise `ps_plugin0_entity`**), `parent::uninstall()` |
 | `getContent()` | dugme Configure | preusmerava na rutu `plugin0_configuration` |
 | `hookActionDispatcherBefore()` | jednom po zahtevu (front, module front controller-i, legacy admin, Symfony admin); ne okida se iz `bin/console` ni webservice-a | `Bootstrap::boot()` |
+| `hookPaymentOptions($params)` | korak placanja na checkout-u (`CheckoutPaymentStep` preko `PaymentOptionsFinder`), sa korpom u `$params['cart']` | jedna `PaymentOption` po metodi iz `Checkout\AvailablePaymentMethods::forCart`; tekst = ime metode, `action` = front controller `payment`, POST polje `method` = id metode |
+| `checkCurrency($cart)` | iz `hookPaymentOptions` i iz front controller-a | PrestaShop-ovo ogranicenje valuta modula (`module_currency`), kao u `ps_wirepayment` |
 
-U `install()` se Core podize rucno, jer hook u tom trenutku jos nije registrovan.
+U `install()` se Core podize rucno, jer hook u tom trenutku jos nije registrovan. Modul u dev prodavnici je bio
+instaliran dok je jos nasledjivao `Module`; hook `paymentOptions` i redovi ogranicenja (`module_currency`,
+`module_country`, `module_carrier`) dodati su 2026-10-14 skriptom u kontejneru, bez reinstalacije (uninstall bi
+obrisao `ps_plugin0_entity` i Worldline konekciju u njoj).
 
 ### 14.4 `Bootstrap.php`
 
@@ -1042,15 +1067,15 @@ implementaciju.
 | `StoreService` | `Infrastructure\StoreService` | domen, prodavnice, statusi narudzbina |
 | `LanguageService` | `Infrastructure\LanguageService` | aktivni jezici prodavnice |
 | `LogoUrlService` | `Infrastructure\LogoUrlService` | URL logotipa metoda (`views/img/payment-methods/{productId}.svg\|png`) |
-| `ShopPaymentService` | `Infrastructure\ShopPaymentService` | loguje admin radnje nad metodama; pri disconnect-u brise zemlje i valute metoda za to okruzenje; pravi posao kad dodje checkout |
+| `ShopPaymentService` | `Infrastructure\ShopPaymentService` | samo loguje Core radnje nad Worldline podesavanjima metoda (save, enable, disconnect); metode iz dema ne dira |
 
 **Repozitorijumi** (`initRepositories()`, preko `RepositoryRegistry::registerRepository`):
 - `BaseRepository` (tabela `ps_plugin0_entity`) za: `ConfigEntity`, `Process`, `LogData`,
   `ConnectionConfigEntity`, `DisconnectTime`, `LogSettingsEntity`, `PayByLinkSettingsEntity`,
   `PaymentSettingsConfigEntity`, `WebhookSettingsEntity`, `PaymentLinkEntity`, `PaymentMethodConfigEntity`,
   `PaymentTransactionEntity`, `PaymentTransactionLockEntity`, `ProductTypeEntity`, `TokenEntity`, i jedini
-  entitet koji nije Core-ov: `Plugin0\PaymentMethods\PaymentMethodRestrictionEntity` (tip
-  `PaymentMethodRestriction`, indeksi `storeId`, `mode`, `paymentProductId`).
+  entitet koji nije Core-ov: `Plugin0\Entity\PaymentMethodEntity` (tip `PaymentMethod`, indeksi `code`, `type`,
+  `isActive`, `sortOrder`): metoda placanja iz demo projekta, vidi 14.6.
 - `LogsRepository` (nasledjuje `BaseRepository`, ista tabela, plus napredna pretraga) za `MonitoringLog` i
   `WebhookLog`.
 - `QueueItem` namerno nije registrovan; dolazi sa `QueueItemRepository` u koraku za pozadinske zadatke.
@@ -1062,33 +1087,61 @@ implementaciju.
 | `api_plugin0_core_info` | `/worldline/core-info` | GET | `CoreInfoController::indexAction` (JSON) | — |
 | `plugin0_configuration` | `/worldline/configuration` | GET, POST | `ConfigurationController::indexAction` | `configuration.html.twig` |
 | `plugin0_payment_methods` | `/worldline/payment-methods` | GET | `PaymentMethodsController::listAction` | `payment_methods.html.twig` |
-| `plugin0_payment_method_enable` | `/worldline/payment-methods/enable` | POST | `PaymentMethodsController::enableAction` | — |
-| `plugin0_payment_method_edit` | `/worldline/payment-methods/{productId}` | GET, POST | `PaymentMethodsController::editAction` | `payment_method.html.twig` |
+| `plugin0_payment_method_create` | `/worldline/payment-methods/create` | GET, POST | `PaymentMethodsController::createAction` | `payment_method.html.twig` |
+| `plugin0_payment_method_edit` | `/worldline/payment-methods/{id}/edit` | GET, POST | `PaymentMethodsController::editAction` | `payment_method.html.twig` |
+| `plugin0_payment_method_active` | `/worldline/payment-methods/{id}/active` | POST | `PaymentMethodsController::setActiveAction` | — |
+| `plugin0_payment_method_delete` | `/worldline/payment-methods/{id}/delete` | POST | `PaymentMethodsController::deleteAction` | — |
 | `plugin0_settings` | `/worldline/settings` | GET, POST | `SettingsController::indexAction` | `settings.html.twig` |
 | `plugin0_logs` | `/worldline/logs` | GET | `LogsController::indexAction` | `logs.html.twig` |
 
 - Sve rute osim `api_plugin0_core_info` imaju `_legacy_controller: AdminPlugin0Configuration`.
-- Ruta `enable` je pre rute `{productId}`, jer Symfony uzima prvu rutu koja odgovara.
+- `{id}` je ceo broj (`[1-9][0-9]{0,17}`); `create` i `{id}/edit` se ne mesaju jer se putanje razlikuju.
 - Settings, Payment methods i Logs nasledjuju `ConnectedController`: postoje samo dok je prodavnica povezana sa
   Worldline-om, inace vode na Configuration.
+- Front strana: `index.php?fc=module&module=plugin0&controller=payment` (`controllers/front/payment.php`,
+  `Link::getModuleLink('plugin0', 'payment')`), stranica na koju vodi opcija placanja izabrana na checkout-u.
 
 Ukratko sta stranice rade:
-- **Configuration**: unos i provera kredencijala po okruzenju (test/live), prikaz stanja i diskonekcija. Tajne
-  nikad ne idu u sablon.
-- **Payment methods**: lista proizvoda koje Core podrzava (`AdminAPI::payment()->list()`: fiksna lista
-  `PaymentProductId::SUPPORTED_PAYMENT_PRODUCTS` spojena sa sacuvanim podesavanjima; Worldline se tu ne pita), sa
-  pretragom, filterima po grupi, zemlji, valuti i statusu, stranicenjem, prekidacem i formom za izmenu. Nema
-  dodavanja ni brisanja. Zemlje i valute metode su ogranicenje koje plugin0 cuva sam
-  (`PaymentMethodRestrictionEntity`, po prodavnici i okruzenju test/live), birano medju zemljama i valutama
-  ukljucenim u PrestaShop-u; prazno za zemlje = sve zemlje prodavnice, prazno za valute = metoda prati Default
-  currency sa Settings stranice. Na kupca ce uticati tek kad checkout postoji.
-- **Settings**: Log level (Core kljuc `minLogLevel`), Default currency (kljuc `defaultCurrency`) i Rows per page
-  (kljuc `rowsPerPage`), kao `ConfigEntity` redovi u `ps_plugin0_entity`. Default za Log level je Info, jer je
-  `_PS_MODE_DEV_ = false`; default za Default currency je podrazumevana valuta prodavnice (`PS_CURRENCY_DEFAULT`).
-  Promena Default currency dodaje novu valutu u listu valuta svake metode koja listu ima
-  (`PaymentMethodRestrictionRepository::addCurrencyEverywhere`).
+- **Configuration**: unos i provera kredencijala po okruzenju (test/live), prikaz stanja i diskonekcija, preko
+  Core `AdminAPI::connection()`. Tajne nikad ne idu u sablon. (Jedina stranica koja ne koristi demo kod.)
+- **Payment methods**: metode koje admin sam pravi, kao u demu (`Logeecom\PaymentMethods`): lista sa pretragom,
+  filterima po valuti, zemlji, tipu (Redirect/iFrame) i statusu, stranicenjem i prekidacem; forma za dodavanje i
+  izmenu (Name, Code jedinstven, Type, Currencies, Countries, Sort order, Active); brisanje sa potvrdom. Valute i
+  zemlje se biraju medju onima ukljucenim u PrestaShop-u (`Adapter\ReferenceData`). Svaka metoda je jedan red tipa
+  `PaymentMethod` u `ps_plugin0_entity`. Aktivne metode cija lista valuta sadrzi valutu korpe, a lista zemalja
+  zemlju adrese za fakturu, PrestaShop nudi kupcu na checkout-u (`hookPaymentOptions`).
+- **Settings**: Log level, Default currency i Rows per page, pravila iz demo `SettingsService`-a; vrednosti su
+  `ConfigEntity` redovi u `ps_plugin0_entity` pod Core kljucem `minLogLevel` (Log level, Core broj nivoa) i
+  kljucevima `defaultCurrency` i `rowsPerPage` (`Adapter\SettingsRepository`). Default za Log level je Info, jer je
+  `_PS_MODE_DEV_ = false`; default za Default currency je `EUR` ako je prodavnica ima, inace prazno
+  ("Choose a currency"), kao u demu; default za Rows per page je 10.
 - **Logs**: cita zapise sa prefiksom `WORLDLINE` iz `ps_log`, najnovije prve, sa filterom po nivou i
-  stranicenjem (`LogReader`).
+  stranicenjem (`LogReader`); velicina stranice je Rows per page.
+
+### 14.6 Demo kod u `lib/Logeecom` i adapteri
+
+Demo projekat (`/home/veljkozbiljic/laravel-docker`) ima poslovni sloj u `src/` bez ijedne Laravel klase:
+`Logeecom\Configuration`, `Logeecom\Logs`, `Logeecom\PaymentMethods` i `Logeecom\Settings`. Ta cetiri foldera su
+kopirana u `lib/Logeecom/` bez izmena (`diff -rq` je prazan), zajedno sa unit testovima (`tests/Unit`, `tests/Support`).
+Laravel adaptere iz demo `app/` (Eloquent repozitorijumi, service provideri, Monolog) ovde zamenjuju:
+
+| Demo interfejs | Implementacija u plugin0 | Nad cime |
+|---|---|---|
+| `PaymentMethodRepositoryInterface` | `Adapter\PaymentMethodRepository` | `Entity\PaymentMethodEntity` kroz Core `RepositoryRegistry` → `BaseRepository` → `ps_plugin0_entity`; tip i status filtrira baza (indeksi), pretragu, valutu, zemlju, redosled i stranicu PHP; transakcija = `START TRANSACTION`/`COMMIT`/`ROLLBACK` kroz `Db` |
+| `ReferenceDataRepositoryInterface` | `Adapter\ReferenceData` | kodovi valuta i zemalja ukljucenih u PrestaShop-u (`ShopCountriesAndCurrencies`) |
+| `SettingsRepositoryInterface` | `Adapter\SettingsRepository` | Core `ConfigEntity` redovi kroz `Plugin0\Configuration`; `log_level` ↔ Core `minLogLevel` |
+| `LogLevelApplierInterface` | `Adapter\LogLevelApplier` | `LoggerService::useMinLogLevel()`: novi nivo vazi odmah, do kraja zahteva |
+| `Psr\Log\LoggerInterface` | `Adapter\CoreLogger` | Core `Logger` → `LoggerService` → `ps_log`; komponenta u poruci je ime servisa (`PaymentMethods`, `Settings`) |
+
+`Plugin0\Services` je jedino mesto koje ih spaja (`Services::paymentMethods()`, `Services::settings()`), kao sto su u
+demu service provideri. `LoggerService` nivo logovanja cita iz demo `SettingsService::logLevel()`.
+`Infrastructure\CoreLogLevel` prevodi imena nivoa iz dema i PSR-3 u Core brojeve i nazad.
+
+Unit testovi (91, iz dema) se pokrecu u kontejneru, na PHP-u 8.2 na kome modul radi:
+
+```
+docker exec -u 1000:1000 -e HOME=/tmp/plugin0-home -w /var/www/html/public/prestashop/8-2-4/modules/plugin0 logeecom_dev php -d xdebug.mode=off vendor/bin/phpunit
+```
 
 Detalji Core API-ja su u [CORE.md](CORE.md).
 

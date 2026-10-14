@@ -4,7 +4,7 @@ namespace Plugin0\Controller\Admin;
 
 use Plugin0\Bootstrap;
 use Plugin0\Infrastructure\LogReader;
-use Plugin0\Settings\SettingsService;
+use Plugin0\Services;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -33,8 +33,8 @@ class LogsController extends ConnectedController
         }
         $page = max(1, (int) $request->query->get('page', 1));
 
-        // Veličina stranice je podešavanje "Rows per page" sa Settings stranice, kao u demu.
-        $perPage = (new SettingsService())->rowsPerPage();
+        // Veličina stranice je podešavanje "Rows per page" sa Settings stranice, iz demo SettingsService-a.
+        $perPage = Services::settings()->rowsPerPage();
 
         $result = (new LogReader())->page($level, $page, $perPage);
         $total = $result['total'];
