@@ -5,6 +5,7 @@ namespace Plugin0\Infrastructure;
 use Context;
 use Country;
 use Currency;
+use RuntimeException;
 
 /**
  * Zemlje i valute koje je prodavnica uključila u PrestaShop adminu: International > Locations > Countries
@@ -15,6 +16,9 @@ use Currency;
  *
  * Svaka lista je jedan upit u bazu i pamti se za ceo zahtev: kontroler je pita više puta po zahtevu (provera
  * filtera, ponuda u formi, povratna adresa), a prodavnica i jezik admina se unutar zahteva ne menjaju.
+ *
+ * Tu je i podrazumevana valuta prodavnice (International > Localization > Currencies, kolona Default; ključ
+ * PS_CURRENCY_DEFAULT u ps_configuration): ona je default podešavanja "Default currency" sa Settings stranice.
  */
 final class ShopCountriesAndCurrencies
 {
@@ -23,6 +27,8 @@ final class ShopCountriesAndCurrencies
 
     /** @var array<string, string>|null */
     private static ?array $currencies = null;
+
+    private static ?string $defaultCurrency = null;
 
     /**
      * Uključene zemlje: ISO kod (country.iso_code, ISO 3166-1 alpha-2) => naziv na jeziku admina, po nazivu.
@@ -64,5 +70,27 @@ final class ShopCountriesAndCurrencies
         ksort($currencies);
 
         return self::$currencies = $currencies;
+    }
+
+    /**
+     * ISO kod podrazumevane valute prodavnice (Currency::getDefaultCurrency, tj. PS_CURRENCY_DEFAULT tekuće
+     * prodavnice). PrestaShop je postavlja pri instalaciji i ne da da se obriše ni isključi, pa je uvek ima;
+     * bez nje prodavnica ne može da radi ni sama, pa plugin tu ne izmišlja zamenu nego javlja grešku.
+     *
+     * @throws RuntimeException kad prodavnica nema podrazumevanu valutu
+     */
+    public static function defaultCurrency(): string
+    {
+        if (self::$defaultCurrency !== null) {
+            return self::$defaultCurrency;
+        }
+
+        $currency = Currency::getDefaultCurrency();
+        $code = $currency instanceof Currency ? strtoupper((string) $currency->iso_code) : '';
+        if ($code === '') {
+            throw new RuntimeException('The shop has no default currency (PS_CURRENCY_DEFAULT).');
+        }
+
+        return self::$defaultCurrency = $code;
     }
 }

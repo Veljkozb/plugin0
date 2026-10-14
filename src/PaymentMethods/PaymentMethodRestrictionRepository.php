@@ -18,6 +18,9 @@ use WOP\OnlinePayments\Core\Infrastructure\ServiceRegister;
  *
  * ActiveConnectionProvider čita konekciju za prodavnicu iz StoreContext-a, pa se svaki poziv izvršava unutar
  * StoreContext::doWithStore($storeId), kao što to AdminAPI radi za Core pozive.
+ *
+ * Izuzetak je addCurrencyEverywhere: podešavanje Default currency važi za celu instalaciju, pa ono ide preko svih
+ * redova, bez obzira na prodavnicu i okruženje, i ne treba mu ni StoreContext ni konekcija.
  */
 final class PaymentMethodRestrictionRepository
 {
@@ -62,7 +65,7 @@ final class PaymentMethodRestrictionRepository
     }
 
     /**
-     * Upisuje ograničenje; dve prazne liste brišu red, jer "bez ograničenja" je isto što i "nema reda".
+     * Upisuje ograničenje; dve prazne liste brišu red, jer "nema reda" znači isto: sve zemlje, Default currency.
      *
      * @param string[] $countries
      * @param string[] $currencies
@@ -122,6 +125,34 @@ final class PaymentMethodRestrictionRepository
         });
     }
 
+    /**
+     * Dodaje valutu u svaki red kome nedostaje, u svim prodavnicama i oba okruženja; zove ga SettingsService kad
+     * se promeni Default currency. Redovi koji valutu već imaju se ne diraju, pa je ponovni poziv bezopasan.
+     * Red bez valuta (samo zemlje) takođe dobija valutu: od tog trenutka metoda ima sopstvenu listu.
+     *
+     * @return int koliko je redova promenjeno
+     */
+    public static function addCurrencyEverywhere(string $currency): int
+    {
+        $repository = self::repository();
+        $count = 0;
+        foreach ($repository->select() as $entity) {
+            /** @var PaymentMethodRestrictionEntity $entity */
+            $currencies = $entity->getCurrencies();
+            if (in_array($currency, $currencies, true)) {
+                continue;
+            }
+
+            $currencies[] = $currency;
+            sort($currencies);
+            $entity->setCurrencies($currencies);
+            $repository->update($entity);
+            ++$count;
+        }
+
+        return $count;
+    }
+
     private function find(string $productId): ?PaymentMethodRestrictionEntity
     {
         $mode = $this->mode();
@@ -154,7 +185,7 @@ final class PaymentMethodRestrictionRepository
         return $connection !== null ? (string) $connection->getMode() : null;
     }
 
-    private function repository(): RepositoryInterface
+    private static function repository(): RepositoryInterface
     {
         return RepositoryRegistry::getRepository(PaymentMethodRestrictionEntity::CLASS_NAME);
     }

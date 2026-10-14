@@ -15,8 +15,9 @@ use WOP\OnlinePayments\Core\Infrastructure\ORM\Entity;
  * i proizvod (paymentProductId). Zato ograničenje prati podešavanja metode: posebno je za test i za live, i briše
  * se zajedno sa njima pri disconnect-u (ShopPaymentService::deletePaymentMethods).
  *
- * Prazna lista znači "bez ograničenja". Red postoji samo dok je bar jedna lista neprazna.
- * Čuva se kao red tipa "PaymentMethodRestriction" u tabeli plugin0_entity (BaseRepository).
+ * Prazna lista zemalja znači "sve zemlje prodavnice". Prazna lista valuta znači "Default currency sa Settings
+ * stranice": metoda bez sopstvene liste prati to podešavanje (PaymentMethodsService). Red postoji samo dok je bar
+ * jedna lista neprazna. Čuva se kao red tipa "PaymentMethodRestriction" u tabeli plugin0_entity (BaseRepository).
  */
 class PaymentMethodRestrictionEntity extends Entity
 {

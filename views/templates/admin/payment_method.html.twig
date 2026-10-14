@@ -11,10 +11,11 @@
 
   Zemlje i valute su ograničenje koje plugin0 čuva sam (nije Core polje); biraju se kao u demu: čipovi sa × i
   jedan select "Add…" koji nudi samo još neizabrane kodove. Svaki čip nosi skriveno polje countries[] / currencies[].
+  Valuta mora biti bar jedna; metoda bez sopstvene liste dolazi sa Default currency (Settings) već izabranom.
 
   Kontroler šalje: product_id, title, group_label, integration_types, sections, languages (kod => naziv, podrazumevani
   prvi), form (vrednosti polja), errors (poruka po polju), choices (countries, currencies: kod => name, in_shop),
-  options (liste za menije), limits, back, back_query.
+  default_currency (ISO kod sa Settings stranice), options (liste za menije), limits, back, back_query.
 #}
 {% extends '@Modules/plugin0/views/templates/admin/layout.html.twig' %}
 
@@ -142,7 +143,7 @@
                 {% endif %}
             </fieldset>
 
-            {{ field.multiselect('currencies', 'Currencies', form.currencies, choices.currencies, errors.currencies|default(''), 'Leave empty to offer the method in every currency of the shop.') }}
+            {{ field.multiselect('currencies', 'Currencies', form.currencies, choices.currencies, errors.currencies|default(''), 'At least one. The default currency from the Settings page (' ~ default_currency ~ ') is added here whenever it changes.') }}
 
             {{ field.multiselect('countries', 'Countries', form.countries, choices.countries, errors.countries|default(''), 'Leave empty to offer the method in every country of the shop. Checked against the billing address.') }}
 

@@ -5,6 +5,7 @@ namespace Plugin0\PaymentMethods;
 use Configuration as PrestaShopConfiguration;
 use Plugin0\Infrastructure\LanguageService;
 use Plugin0\Infrastructure\LoggerService;
+use Plugin0\Settings\SettingsService;
 use Throwable;
 use WOP\OnlinePayments\Core\Bootstrap\ApiFacades\AdminConfig\AdminAPI\AdminAPI;
 use WOP\OnlinePayments\Core\BusinessLogic\AdminConfig\ApiFacades\PaymentAPI\Request\PaymentMethodRequest;
@@ -17,8 +18,10 @@ use WOP\OnlinePayments\Core\Infrastructure\Logger\Logger;
  * uključivanje i čuvanje. Pretraga, filteri i straničenje su ovde, u memoriji: Core vraća ceo katalog odjednom,
  * bez sopstvenog straničenja, a katalog ima pedesetak proizvoda.
  *
- * Uz to i zemlje i valute na koje je metoda ograničena: njih Core nema, pa ih plugin0 čuva sam
- * (PaymentMethodRestrictionRepository). Prazna lista znači "bez ograničenja".
+ * Uz to i zemlje i valute u kojima se metoda nudi: njih Core nema, pa ih plugin0 čuva sam
+ * (PaymentMethodRestrictionRepository). Prazna lista zemalja znači "sve zemlje prodavnice". Lista valuta nikad nije
+ * prazna: metoda bez sopstvene liste nudi se u Default currency sa Settings stranice (SettingsService), a metoda
+ * sa listom u onome što je admin izabrao, u šta SettingsService dodaje svaku novu Default currency.
  *
  * Greške Core-a stižu kao TranslatableErrorResponse (ErrorHandlingAspect ih nikad ne baca dalje); ovde postaju
  * poruka za flash, ili null kad je sve prošlo.
@@ -32,6 +35,8 @@ final class PaymentMethodsService
     private const COMPONENT = 'PaymentMethods';
 
     private string $storeId;
+
+    private ?string $defaultCurrency = null;
 
     public function __construct(string $storeId)
     {
@@ -61,6 +66,7 @@ final class PaymentMethodsService
         $methods = [];
         foreach ($response->toArray() as $method) {
             $productId = (string) $method['paymentProductId'];
+            $restriction = $this->withDefaultCurrency($restrictions[$productId] ?? ['countries' => [], 'currencies' => []]);
             $methods[] = [
                 'product_id' => $productId,
                 'name' => (string) ($method['name']['value'] ?? ''),
@@ -68,8 +74,8 @@ final class PaymentMethodsService
                 'group_label' => PaymentMethodCatalog::groupLabel((string) $method['paymentGroup']),
                 'integration_types' => PaymentMethodCatalog::integrationLabels((array) $method['integrationTypes']),
                 'enabled' => (bool) $method['enabled'],
-                'countries' => $restrictions[$productId]['countries'] ?? [],
-                'currencies' => $restrictions[$productId]['currencies'] ?? [],
+                'countries' => $restriction['countries'],
+                'currencies' => $restriction['currencies'],
             ];
         }
         usort($methods, static function (array $a, array $b): int {
@@ -83,8 +89,8 @@ final class PaymentMethodsService
      * Jedna strana liste, sužena pretragom i filterima; svaki postavljen uslov dodatno sužava, kao u demu.
      * Strana iza poslednje vraća praznu listu uz ukupan broj, pa šablon može to i da kaže.
      *
-     * Filter zemlje ili valute pokazuje metode koje u njoj mogu da se ponude: bez ograničenja, ili sa tom zemljom
-     * odnosno valutom u ograničenju.
+     * Filter zemlje ili valute pokazuje metode koje u njoj mogu da se ponude: zemlja bez ograničenja ili u listi,
+     * valuta u listi (lista valuta uvek postoji, vidi all()).
      *
      * @param array{search: string, group: string, country: string, currency: string, status: string, page: int} $filter
      *
@@ -160,14 +166,22 @@ final class PaymentMethodsService
         return $response->isSuccessful() ? null : $this->errorMessage($response);
     }
 
-    /** @return array{countries: string[], currencies: string[]} prazne liste kad ograničenja nema */
+    /**
+     * Zemlje i valute metode za formu: sačuvana lista zemalja (prazna = sve) i valute u kojima se metoda nudi,
+     * što je za metodu bez sopstvene liste Default currency. Tako forma metode koja nikad nije podešavana počinje
+     * sa Default currency već izabranom, kao forma nove metode u demu.
+     *
+     * @return array{countries: string[], currencies: string[]}
+     */
     public function restriction(string $productId): array
     {
-        return $this->restrictions()->get($productId);
+        return $this->withDefaultCurrency($this->restrictions()->get($productId));
     }
 
     /**
      * Upisuje zemlje i valute metode, i kad su se promenile ostavlja zapis u logu sa starim i novim listama.
+     * Poredi se sa sačuvanim redom, ne sa onim što forma prikazuje: metoda koja je pratila Default currency i sad
+     * dobija istu tu valutu kao sopstvenu listu jeste promena, i ona se upisuje.
      *
      * @param string[] $countries
      * @param string[] $currencies
@@ -226,6 +240,32 @@ final class PaymentMethodsService
     private static function allows(array $codes, string $code): bool
     {
         return $codes === [] || in_array($code, $codes, true);
+    }
+
+    /**
+     * Sačuvano ograničenje kakvo važi: prazna lista valuta postaje Default currency sa Settings stranice.
+     *
+     * @param array{countries: string[], currencies: string[]} $restriction
+     *
+     * @return array{countries: string[], currencies: string[]}
+     */
+    private function withDefaultCurrency(array $restriction): array
+    {
+        if ($restriction['currencies'] === []) {
+            $restriction['currencies'] = [$this->defaultCurrency()];
+        }
+
+        return $restriction;
+    }
+
+    /** Jednom po objektu: ista vrednost za svaku metodu u listi. */
+    private function defaultCurrency(): string
+    {
+        if ($this->defaultCurrency === null) {
+            $this->defaultCurrency = (new SettingsService())->defaultCurrency();
+        }
+
+        return $this->defaultCurrency;
     }
 
     private function restrictions(): PaymentMethodRestrictionRepository

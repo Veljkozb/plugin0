@@ -6,7 +6,8 @@
 
   Sadržaj je Worldline katalog iz Core-a, pa nema "Add payment method" ni Delete, a prazna tabela ne postoji: samo
   "nema poklapanja" kad filter ništa ne nađe. Umesto demo kolone Order i filtera Type stoje Group i Type (način
-  integracije iz Worldline kataloga), jer Core nema redosled metoda. Prazno ograničenje piše "All".
+  integracije iz Worldline kataloga), jer Core nema redosled metoda. Prazno ograničenje zemalja piše "All"; valute
+  nikad nisu prazne (metoda bez sopstvene liste prati Default currency, PaymentMethodsService::all).
 
   Kontroler šalje: filter (search, group, country, currency, status, page), query (samo postavljeni parametri), back
   (isto kao query string, za povratak), groups, countries, currencies (kod => naziv), statuses, page (items, total,

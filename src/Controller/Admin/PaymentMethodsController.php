@@ -27,7 +27,9 @@ use WOP\OnlinePayments\Core\BusinessLogic\Domain\PaymentMethod\PaymentMethodDefa
  * liste: forme ga nose u polju "back" (demo: location.state.from).
  *
  * Zemlje i valute metode (ograničenje koje plugin0 čuva sam, Core ga nema) biraju se među onima koje je prodavnica
- * uključila u PrestaShop-u (ShopCountriesAndCurrencies). Prazan izbor znači "bez ograničenja".
+ * uključila u PrestaShop-u (ShopCountriesAndCurrencies). Prazan izbor zemalja znači "sve zemlje prodavnice".
+ * Valuta mora biti bar jedna; metoda bez sopstvene liste prati Default currency sa Settings stranice
+ * (PaymentMethodsService::restriction), pa forma počinje sa tom valutom.
  *
  * Kao u demu, stranica postoji samo dok je prodavnica povezana; inače vodi na Configuration.
  */
@@ -139,6 +141,7 @@ class PaymentMethodsController extends ConnectedController
             return $this->redirectToRoute('plugin0_payment_methods', $back);
         }
         $sections = PaymentMethodCatalog::sections($productId);
+        $defaultCurrency = (new SettingsService())->defaultCurrency();
         $choices = [
             'countries' => $this->choices(ShopCountriesAndCurrencies::countries(), $restriction['countries']),
             'currencies' => $this->choices(ShopCountriesAndCurrencies::currencies(), $restriction['currencies']),
@@ -182,6 +185,7 @@ class PaymentMethodsController extends ConnectedController
             'form' => $form->values(),
             'errors' => $errors,
             'choices' => $choices,
+            'default_currency' => $defaultCurrency,
             'options' => [
                 'payment_actions' => PaymentMethodForm::PAYMENT_ACTIONS,
                 'flow_types' => PaymentMethodForm::FLOW_TYPES,

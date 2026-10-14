@@ -1,10 +1,11 @@
 {#
   Settings stranica, kao u demo projektu (resources/js/settings/SettingsScreen.jsx): Log level sa tekstom efekta
-  pored polja, Rows per page, dugmad Save i Restore defaults. Restore traži potvrdu pre slanja, kao RestoreDialog u demu.
-  Demo polje Default currency nije ovde: ništa u plugin0 ne bi čitalo tu vrednost.
+  pored polja, Default currency, Rows per page, dugmad Save i Restore defaults. Restore traži potvrdu pre slanja,
+  kao RestoreDialog u demu. Default currency nudi valute uključene u prodavnici; tekst ispod polja kaže šta
+  promena radi sa metodama plaćanja (SettingsService::spreadDefaultCurrency).
 
-  Kontroler šalje: form (log_level, rows_per_page), errors (poruka po polju), levels (value, label, effect),
-  defaults (log_level, rows_per_page), min_rows, max_rows.
+  Kontroler šalje: form (log_level, default_currency, rows_per_page), errors (poruka po polju), levels (value, label,
+  effect), currencies (kod => naziv), defaults (log_level, default_currency, rows_per_page), min_rows, max_rows.
 #}
 {% extends '@Modules/plugin0/views/templates/admin/layout.html.twig' %}
 
@@ -31,6 +32,23 @@
                         {% endif %}
                         {# Efekat trenutnog izbora pored polja, kao u demu; JS ga menja pri promeni menija. #}
                         <small class="form-text text-muted" id="plugin0_log_level_effect"></small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="default_currency">Default currency</label>
+                        {% if currencies is empty %}
+                        <p class="text-muted mb-0">The shop has no currency enabled.</p>
+                        {% else %}
+                        <select class="form-control{{ errors.default_currency is defined ? ' is-invalid' }}" id="default_currency" name="default_currency" style="max-width: 20rem;">
+                            {% for code, name in currencies %}
+                            <option value="{{ code }}" {{ form.default_currency == code ? 'selected' }}>{{ code }} – {{ name }}</option>
+                            {% endfor %}
+                        </select>
+                        {% endif %}
+                        {% if errors.default_currency is defined %}
+                        <div class="invalid-feedback d-block">{{ errors.default_currency }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">Every payment method is offered in this currency. A method without currencies of its own is offered only in it; when you change it, the new currency is added to the currencies of every other method.</small>
                     </div>
 
                     <div class="form-group">
@@ -68,9 +86,10 @@
     (function () {
         var select = document.getElementById('log_level');
         var effect = document.getElementById('plugin0_log_level_effect');
+        var currency = document.getElementById('default_currency');
         var rows = document.getElementById('rows_per_page');
         var saveButton = document.getElementById('plugin0_save_button');
-        var initial = { level: select.value, rows: rows.value };
+        var initial = { level: select.value, currency: currency ? currency.value : '', rows: rows.value };
 
         function showEffect() {
             var option = select.options[select.selectedIndex];
@@ -79,13 +98,18 @@
 
         // Save ima smisla samo kad se nešto promenilo, kao u demu.
         function showDirty() {
-            saveButton.disabled = select.value === initial.level && rows.value === initial.rows;
+            saveButton.disabled = select.value === initial.level
+                && (currency ? currency.value : '') === initial.currency
+                && rows.value === initial.rows;
         }
 
         select.addEventListener('change', function () {
             showEffect();
             showDirty();
         });
+        if (currency) {
+            currency.addEventListener('change', showDirty);
+        }
         rows.addEventListener('input', showDirty);
         // Browser posle osvežavanja može da vrati stari izbor u polja; uskladi prikaz sa njim.
         showEffect();
@@ -93,8 +117,8 @@
 
         document.getElementById('plugin0_restore_form').addEventListener('submit', function (event) {
             var question = 'Restore every setting to its default?\n\n'
-                + 'The log level goes back to {{ defaults.log_level|capitalize }} and the rows per page to {{ defaults.rows_per_page }}. '
-                + 'What is saved now is lost.';
+                + 'The log level goes back to {{ defaults.log_level|capitalize }}, the default currency to {{ defaults.default_currency }} '
+                + 'and the rows per page to {{ defaults.rows_per_page }}. What is saved now is lost.';
             if (!window.confirm(question)) {
                 event.preventDefault();
             }

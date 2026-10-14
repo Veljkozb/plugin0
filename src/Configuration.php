@@ -21,6 +21,9 @@ class Configuration extends CoreConfiguration
     /** Ključ podešavanja "Rows per page" sa Settings stranice; postoji samo u plugin0. */
     public const KEY_ROWS_PER_PAGE = 'rowsPerPage';
 
+    /** Ključ podešavanja "Default currency" sa Settings stranice (ISO 4217 kod); postoji samo u plugin0. */
+    public const KEY_DEFAULT_CURRENCY = 'defaultCurrency';
+
     protected static ?Singleton $instance = null;
 
     public function getIntegrationName(): string

@@ -838,7 +838,7 @@ i po potrebi cron/wakeup poziv `TaskRunnerWakeup::wakeup()` (npr. iz hook-a ili 
 | Checkout front kontroleri, return/landing, admin akcije na narudžbini | PrestaShop strana | **nema** |
 | `brand.json` | `ActiveBrandProvider` | **ima** |
 | Tabela u bazi | `Installer::createTables` | **ima**: `plugin0_entity` sa 9 indeksnih kolona |
-| Admin strane | PrestaShop Symfony rute `config/routes.yml` | **ima**: Configuration (`/worldline/configuration`), Payment methods (`/worldline/payment-methods`, `.../payment-methods/enable`, `.../payment-methods/{productId}`; lista, prekidač i forma nad `AdminAPI::payment()`), Settings (`/worldline/settings`; Log level i Rows per page kao `ConfigEntity` ključevi `minLogLevel` i `rowsPerPage`), Logs (`/worldline/logs`, čita `ps_log`), `api_plugin0_core_info` |
+| Admin strane | PrestaShop Symfony rute `config/routes.yml` | **ima**: Configuration (`/worldline/configuration`), Payment methods (`/worldline/payment-methods`, `.../payment-methods/enable`, `.../payment-methods/{productId}`; lista, prekidač i forma nad `AdminAPI::payment()`), Settings (`/worldline/settings`; Log level, Default currency i Rows per page kao `ConfigEntity` ključevi `minLogLevel`, `defaultCurrency` i `rowsPerPage`), Logs (`/worldline/logs`, čita `ps_log`), `api_plugin0_core_info` |
 
 Redosled implementacije koji sledi iz zavisnosti: (1) `QueueItemRepository` + async endpoint (jer i Hosted Tokenization bez
 3DS i disconnect i svi periodični taskovi zavise od toga), (2) `ShopOrderService` + `CartProvider` + checkout/return kontroleri,

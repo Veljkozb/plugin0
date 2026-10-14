@@ -20,7 +20,9 @@ use WOP\OnlinePayments\Core\BusinessLogic\Domain\PaymentMethod\MethodAdditionalD
  * Koja polja postoje za koji proizvod kaže PaymentMethodCatalog::sections().
  *
  * Zemlje i valute (countries, currencies) nisu deo Core zahteva: to je ograničenje koje plugin0 čuva sam
- * (PaymentMethodRestrictionRepository), pa ih daje restriction(), a ne toRequest(). Prazna lista = bez ograničenja.
+ * (PaymentMethodRestrictionRepository), pa ih daje restriction(), a ne toRequest(). Prazna lista zemalja = sve
+ * zemlje prodavnice. Valuta mora biti bar jedna (demo kriterijum 9: metoda bez valute ne može nikome da se ponudi);
+ * forma počinje sa Default currency sa Settings stranice kad metoda nema sopstvenu listu.
  *
  * Ime i naziv sačuvane kartice su po jeziku prodavnice (kod jezika => tekst). Prvi jezik je podrazumevani jezik
  * prodavnice i on postaje Core-ov default prevod, pa je obavezan. Ostali smeju ostati prazni: Core ih pri čuvanju
@@ -174,6 +176,8 @@ final class PaymentMethodForm
      *
      * @param array<string, bool> $sections PaymentMethodCatalog::sections()
      * @param array<string, string> $languages kod => naziv, podrazumevani jezik prvi
+     * Valuta mora biti bar jedna, osim kad prodavnica nema nijednu uključenu (tada forma polje i ne nudi).
+     *
      * @param array{countries: array<string, mixed>, currencies: array<string, mixed>} $choices ponuđeni kodovi kao ključevi
      *
      * @return array<string, string> poruka po polju; prazno kad je sve ispravno
@@ -254,6 +258,9 @@ final class PaymentMethodForm
             if ($unknown !== []) {
                 $errors[$field] = sprintf('The %s %s is not one of the choices.', $noun, implode(', ', $unknown));
             }
+        }
+        if ($values['currencies'] === [] && $choices['currencies'] !== []) {
+            $errors['currencies'] = 'Select at least one currency.';
         }
 
         return $errors;
@@ -356,8 +363,8 @@ final class PaymentMethodForm
     }
 
     /**
-     * Grupa checkbox-ova (countries[], currencies[]): kodovi velikim slovima, bez ponavljanja, po abecedi, da isti
-     * izbor uvek bude ista lista. Nijedan štikliran = polje nije poslato = prazna lista.
+     * Grupa čipova (countries[], currencies[]): kodovi velikim slovima, bez ponavljanja, po abecedi, da isti
+     * izbor uvek bude ista lista. Nijedan izabran = polje nije poslato = prazna lista.
      *
      * @param array<string, mixed> $input
      *

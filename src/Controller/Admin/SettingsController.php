@@ -3,6 +3,7 @@
 namespace Plugin0\Controller\Admin;
 
 use Plugin0\Bootstrap;
+use Plugin0\Settings\DefaultCurrencySpreadFailed;
 use Plugin0\Settings\LogLevel;
 use Plugin0\Settings\Settings;
 use Plugin0\Settings\SettingsService;
@@ -11,8 +12,8 @@ use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 /**
- * Settings stranica, prenesena iz dema (resources/js/settings/SettingsScreen.jsx): Log level i Rows per page,
- * sa Save i Restore defaults. GET prikazuje formu sa vrednostima na snazi; POST čuva (action=save) ili vraća
+ * Settings stranica, prenesena iz dema (resources/js/settings/SettingsScreen.jsx): Log level, Default currency i
+ * Rows per page, sa Save i Restore defaults. GET prikazuje formu sa vrednostima na snazi; POST čuva (action=save) ili vraća
  * na default (action=restore), pa vodi nazad na GET. Pogrešan unos ne ide u bazu: forma se vraća sa porukom
  * ispod polja i sa onim što je uneto.
  *
@@ -45,14 +46,19 @@ class SettingsController extends ConnectedController
 
         $submitted = [
             'log_level' => trim((string) $request->request->get('log_level', '')),
+            'default_currency' => strtoupper(trim((string) $request->request->get('default_currency', ''))),
             'rows_per_page' => trim((string) $request->request->get('rows_per_page', '')),
         ];
-        $errors = $this->validate($submitted);
+        $errors = $this->validate($service, $submitted);
         if ($errors !== []) {
             return $this->renderForm($service, $submitted, $errors);
         }
 
-        $this->save($service, new Settings(LogLevel::fromName($submitted['log_level']), (int) $submitted['rows_per_page']));
+        $this->save($service, new Settings(
+            LogLevel::fromName($submitted['log_level']),
+            $submitted['default_currency'],
+            (int) $submitted['rows_per_page']
+        ));
 
         return $this->redirectToRoute('plugin0_settings');
     }
@@ -62,12 +68,20 @@ class SettingsController extends ConnectedController
      *
      * @return array<string, string> poruka po polju; prazno kad je sve ispravno
      */
-    private function validate(array $submitted): array
+    private function validate(SettingsService $service, array $submitted): array
     {
         $errors = [];
 
         if (LogLevel::fromName($submitted['log_level']) === null) {
             $errors['log_level'] = 'The log level must be Debug, Info, Warning or Error.';
+        }
+
+        // Samo valuta uključena u prodavnici (requirement 4.1: "only currencies known to the application").
+        $currency = $submitted['default_currency'];
+        if ($currency === '') {
+            $errors['default_currency'] = 'Choose a default currency.';
+        } elseif (!isset($service->currencies()[$currency])) {
+            $errors['default_currency'] = sprintf('The currency %s is not one the shop has enabled.', $currency);
         }
 
         $rows = $submitted['rows_per_page'];
@@ -90,6 +104,11 @@ class SettingsController extends ConnectedController
     {
         try {
             $saved = $service->save($settings);
+        } catch (DefaultCurrencySpreadFailed $e) {
+            // Podešavanja jesu upisana; nije prošlo samo dodavanje valute metodama, i poruka kaže baš to.
+            $this->addFlash('error', $e->getMessage());
+
+            return;
         } catch (Throwable $e) {
             $this->addFlash('error', 'Settings could not be saved. ' . $e->getMessage());
 
@@ -110,6 +129,10 @@ class SettingsController extends ConnectedController
     {
         try {
             $restored = $service->restoreDefaults();
+        } catch (DefaultCurrencySpreadFailed $e) {
+            $this->addFlash('error', $e->getMessage());
+
+            return;
         } catch (Throwable $e) {
             $this->addFlash('error', 'Settings could not be restored. ' . $e->getMessage());
 
@@ -126,7 +149,7 @@ class SettingsController extends ConnectedController
     }
 
     /**
-     * @param array<string, string|int> $form vrednosti polja: log_level (ime nivoa) i rows_per_page
+     * @param array<string, string|int> $form vrednosti polja: log_level (ime nivoa), default_currency (ISO kod) i rows_per_page
      * @param array<string, string> $errors poruka po polju
      */
     private function renderForm(SettingsService $service, array $form, array $errors): Response
@@ -137,6 +160,7 @@ class SettingsController extends ConnectedController
             'form' => $form,
             'errors' => $errors,
             'levels' => $service->logLevels(),
+            'currencies' => $service->currencies(),
             'defaults' => $service->defaults()->toArray(),
             'min_rows' => Settings::MIN_ROWS_PER_PAGE,
             'max_rows' => Settings::MAX_ROWS_PER_PAGE,

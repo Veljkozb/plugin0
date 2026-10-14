@@ -1080,9 +1080,13 @@ Ukratko sta stranice rade:
   pretragom, filterima po grupi, zemlji, valuti i statusu, stranicenjem, prekidacem i formom za izmenu. Nema
   dodavanja ni brisanja. Zemlje i valute metode su ogranicenje koje plugin0 cuva sam
   (`PaymentMethodRestrictionEntity`, po prodavnici i okruzenju test/live), birano medju zemljama i valutama
-  ukljucenim u PrestaShop-u; prazno = bez ogranicenja. Na kupca ce uticati tek kad checkout postoji.
-- **Settings**: Log level (Core kljuc `minLogLevel`) i Rows per page (kljuc `rowsPerPage`), kao `ConfigEntity`
-  redovi u `ps_plugin0_entity`. Default za Log level je Info, jer je `_PS_MODE_DEV_ = false`.
+  ukljucenim u PrestaShop-u; prazno za zemlje = sve zemlje prodavnice, prazno za valute = metoda prati Default
+  currency sa Settings stranice. Na kupca ce uticati tek kad checkout postoji.
+- **Settings**: Log level (Core kljuc `minLogLevel`), Default currency (kljuc `defaultCurrency`) i Rows per page
+  (kljuc `rowsPerPage`), kao `ConfigEntity` redovi u `ps_plugin0_entity`. Default za Log level je Info, jer je
+  `_PS_MODE_DEV_ = false`; default za Default currency je podrazumevana valuta prodavnice (`PS_CURRENCY_DEFAULT`).
+  Promena Default currency dodaje novu valutu u listu valuta svake metode koja listu ima
+  (`PaymentMethodRestrictionRepository::addCurrencyEverywhere`).
 - **Logs**: cita zapise sa prefiksom `WORLDLINE` iz `ps_log`, najnovije prve, sa filterom po nivou i
   stranicenjem (`LogReader`).
 

@@ -4,6 +4,8 @@ namespace Plugin0\Settings;
 
 use Plugin0\Configuration;
 use Plugin0\Infrastructure\LoggerService;
+use Plugin0\Infrastructure\ShopCountriesAndCurrencies;
+use Plugin0\PaymentMethods\PaymentMethodRestrictionRepository;
 use Throwable;
 use WOP\OnlinePayments\Core\Infrastructure\Logger\Logger;
 
@@ -13,9 +15,13 @@ use WOP\OnlinePayments\Core\Infrastructure\Logger\Logger;
  * vraća sve na default, a svaka promena ostavlja zapis u logu.
  *
  * Vrednosti se čuvaju kao Core ConfigEntity redovi u tabeli plugin0_entity, kroz Plugin0\Configuration:
- * ključ "minLogLevel" (Core-ov sopstveni ključ, vidi docs/CORE.md 4.4) i ključ "rowsPerPage" (samo plugin0).
- * Oba su kontekstno specifični ključevi, a kontekst je ID tenanta, koji je u plugin0 uvek prazan string:
- * podešavanja važe za celu PrestaShop instalaciju, ne po prodavnici.
+ * ključ "minLogLevel" (Core-ov sopstveni ključ, vidi docs/CORE.md 4.4), pa ključevi "defaultCurrency" i
+ * "rowsPerPage" (samo plugin0). Sva tri su kontekstno specifični ključevi, a kontekst je ID tenanta, koji je u
+ * plugin0 uvek prazan string: podešavanja važe za celu PrestaShop instalaciju, ne po prodavnici.
+ *
+ * Default currency je veza Settings i Payment methods stranice: svaka metoda plaćanja se nudi u njoj. Metoda bez
+ * sopstvene liste valuta nudi se samo u njoj (PaymentMethodsService), a kad se podešavanje promeni, nova valuta se
+ * dodaje u listu svake metode koja listu ima (spreadDefaultCurrency); stara ostaje u tim listama.
  *
  * Defaulti žive ovde i nigde drugde. Liste pitaju rowsPerPage() i nemaju sopstveni broj.
  */
@@ -29,12 +35,12 @@ final class SettingsService
     /** Podešavanja na snazi: sačuvana vrednost koja je i dalje ispravna, inače default. */
     public function current(): Settings
     {
-        return new Settings($this->logLevel(), $this->rowsPerPage());
+        return new Settings($this->logLevel(), $this->defaultCurrency(), $this->rowsPerPage());
     }
 
     public function defaults(): Settings
     {
-        return new Settings($this->defaultLogLevel(), self::DEFAULT_ROWS_PER_PAGE);
+        return new Settings($this->defaultLogLevel(), $this->shopDefaultCurrency(), self::DEFAULT_ROWS_PER_PAGE);
     }
 
     /**
@@ -55,7 +61,38 @@ final class SettingsService
         return LogLevel::isValid($stored) ? $stored : $this->defaultLogLevel();
     }
 
-    /** Veličina stranice svake liste: Logs, kasnije Payment methods. */
+    /**
+     * Default podešavanja "Default currency": podrazumevana valuta prodavnice u PrestaShop-u. Demo tu nema default
+     * (polje prazno dok admin ne izabere), ali ovde svaka metoda plaćanja mora da ima valutu i pre prve posete
+     * Settings stranici, pa default mora da postoji.
+     */
+    public function shopDefaultCurrency(): string
+    {
+        return ShopCountriesAndCurrencies::defaultCurrency();
+    }
+
+    /**
+     * Valuta u kojoj se nudi svaka metoda plaćanja. Sačuvana vrednost važi dok je prodavnica ima uključenu;
+     * valuta koju je admin posle isključio u PrestaShop-u ne može biti ponuđena, pa tada važi default.
+     */
+    public function defaultCurrency(): string
+    {
+        $stored = $this->stored(Configuration::KEY_DEFAULT_CURRENCY);
+
+        return $this->isKnownCurrency($stored) ? $stored : $this->shopDefaultCurrency();
+    }
+
+    /**
+     * Valute koje Default currency sme da bude: uključene u prodavnici, kod => naziv, po kodu.
+     *
+     * @return array<string, string>
+     */
+    public function currencies(): array
+    {
+        return ShopCountriesAndCurrencies::currencies();
+    }
+
+    /** Veličina stranice svake liste: Logs i Payment methods. */
     public function rowsPerPage(): int
     {
         $stored = $this->stored(Configuration::KEY_ROWS_PER_PAGE);
@@ -84,7 +121,11 @@ final class SettingsService
      * Promena nivoa logovanja se piše na WARNING, sve ostalo na INFO: nivo odlučuje šta se od tada upisuje,
      * pa njegovo spuštanje ne sme da prođe nezapaženo.
      *
+     * Kad se promenila Default currency, posle upisa se nova valuta dodaje u liste metoda plaćanja.
+     *
      * @return Settings podešavanja na snazi posle upisa, ponovo pročitana iz baze
+     *
+     * @throws DefaultCurrencySpreadFailed podešavanja su upisana, ali valuta nije dodata metodama
      */
     public function save(Settings $settings): Settings
     {
@@ -111,20 +152,30 @@ final class SettingsService
                 if ($settings->getLogLevel() !== $before->getLogLevel()) {
                     $configuration->saveMinLogLevel($settings->getLogLevel());
                 }
+                if ($settings->getDefaultCurrency() !== $before->getDefaultCurrency()) {
+                    $configuration->storeValue(Configuration::KEY_DEFAULT_CURRENCY, $settings->getDefaultCurrency());
+                }
                 if ($settings->getRowsPerPage() !== $before->getRowsPerPage()) {
                     $configuration->storeValue(Configuration::KEY_ROWS_PER_PAGE, $settings->getRowsPerPage());
                 }
             }
         );
 
+        if (isset($changes['default_currency'])) {
+            $this->spreadDefaultCurrency($settings->getDefaultCurrency());
+        }
+
         return $this->current();
     }
 
     /**
      * Vraća sva podešavanja na default tako što briše sačuvane redove, i ostavlja jedan zapis sa onim što se
-     * time promenilo. Kad je sve već bilo na defaultu, ne piše ništa.
+     * time promenilo. Kad je sve već bilo na defaultu, ne piše ništa. Kad se time promenila Default currency,
+     * podrazumevana valuta prodavnice se dodaje u liste metoda plaćanja, isto kao pri čuvanju.
      *
      * @return Settings podešavanja na snazi posle brisanja, ponovo pročitana iz baze
+     *
+     * @throws DefaultCurrencySpreadFailed redovi su obrisani, ali valuta nije dodata metodama
      */
     public function restoreDefaults(): Settings
     {
@@ -148,11 +199,48 @@ final class SettingsService
             static function (): void {
                 $configuration = Configuration::getInstance();
                 $configuration->removeValue(Configuration::KEY_MIN_LOG_LEVEL);
+                $configuration->removeValue(Configuration::KEY_DEFAULT_CURRENCY);
                 $configuration->removeValue(Configuration::KEY_ROWS_PER_PAGE);
             }
         );
 
+        if (isset($changes['default_currency'])) {
+            $this->spreadDefaultCurrency($after->getDefaultCurrency());
+        }
+
         return $this->current();
+    }
+
+    /**
+     * Dodaje valutu u listu valuta svake metode plaćanja koja listu ima, u svim prodavnicama i oba okruženja
+     * (test i live), jer podešavanje važi za celu instalaciju. Metode bez liste se ne diraju: one ionako prate
+     * Default currency. Zove se tek pošto je podešavanje upisano i novi nivo logovanja na snazi.
+     *
+     * @throws DefaultCurrencySpreadFailed
+     */
+    private function spreadDefaultCurrency(string $currency): void
+    {
+        try {
+            $count = PaymentMethodRestrictionRepository::addCurrencyEverywhere($currency);
+        } catch (Throwable $e) {
+            $this->log(Logger::WARNING, 'Default currency could not be added to payment methods', [
+                'currency' => $currency,
+                'error' => $e->getMessage(),
+            ]);
+
+            throw new DefaultCurrencySpreadFailed(sprintf(
+                'The default currency %s was saved, but it could not be added to the currencies of the payment methods. %s',
+                $currency,
+                $e->getMessage()
+            ), 0, $e);
+        }
+
+        if ($count > 0) {
+            $this->log(Logger::INFO, 'Default currency added to payment methods', [
+                'currency' => $currency,
+                'methods' => $count,
+            ]);
+        }
     }
 
     /**
@@ -198,6 +286,12 @@ final class SettingsService
         }
 
         return (int) $rows >= Settings::MIN_ROWS_PER_PAGE && (int) $rows <= Settings::MAX_ROWS_PER_PAGE;
+    }
+
+    /** @param mixed $code sačuvana vrednost, bilo kog tipa; poznata je kad je uključena u prodavnici */
+    private function isKnownCurrency($code): bool
+    {
+        return Settings::isCurrencyCode($code) && isset($this->currencies()[$code]);
     }
 
     /**
