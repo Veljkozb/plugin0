@@ -4,6 +4,7 @@ namespace Plugin0;
 
 use Plugin0\Infrastructure\Repository\BaseRepository;
 use Plugin0\Infrastructure\Repository\LogsRepository;
+use Plugin0\PaymentMethods\PaymentMethodRestrictionEntity;
 use WOP\OnlinePayments\Core\Bootstrap\BootstrapComponent;
 use WOP\OnlinePayments\Core\Bootstrap\Configuration\Configuration as CoreConfiguration;
 use WOP\OnlinePayments\Core\Bootstrap\DataAccess\Connection\ConnectionConfigEntity;
@@ -35,6 +36,12 @@ use WOP\OnlinePayments\Core\Infrastructure\Serializer\Concrete\JsonSerializer;
 use WOP\OnlinePayments\Core\Infrastructure\Serializer\Serializer;
 use Plugin0\Infrastructure\StoreService;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\Stores\StoreService as StoreServiceInterface;
+use Plugin0\Infrastructure\LanguageService;
+use Plugin0\Infrastructure\LogoUrlService;
+use Plugin0\Infrastructure\ShopPaymentService;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\Language\LanguageService as LanguageServiceInterface;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\Logo\LogoUrlService as LogoUrlServiceInterface;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\Payment\ShopPaymentService as ShopPaymentServiceInterface;
 
 class Bootstrap extends BootstrapComponent
 {
@@ -87,6 +94,19 @@ class Bootstrap extends BootstrapComponent
         ServiceRegister::registerService(StoreServiceInterface::class, static function () {
             return new StoreService();
         });
+
+        // Tri servisa bez kojih Core ne može da napravi PaymentService (admin lista metoda) ni DisconnectService.
+        ServiceRegister::registerService(LanguageServiceInterface::class, static function () {
+            return new LanguageService();
+        });
+
+        ServiceRegister::registerService(LogoUrlServiceInterface::class, static function () {
+            return new LogoUrlService();
+        });
+
+        ServiceRegister::registerService(ShopPaymentServiceInterface::class, static function () {
+            return new ShopPaymentService();
+        });
     }
 
     /**
@@ -114,6 +134,8 @@ class Bootstrap extends BootstrapComponent
             PaymentTransactionLockEntity::class,
             ProductTypeEntity::class,
             TokenEntity::class,
+            // Jedini entitet koji nije Core-ov: zemlje i valute metode plaćanja, vidi PaymentMethodRestrictionEntity.
+            PaymentMethodRestrictionEntity::class,
         ];
 
         foreach ($entities as $entityClass) {

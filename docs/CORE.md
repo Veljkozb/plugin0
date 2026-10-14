@@ -471,7 +471,7 @@ Kontroleri koje `AdminAPI` izlaže (svi se dobijaju iz `ServiceRegister`-a kao `
 |---|---|---|
 | `ConnectionAPI\Controller\ConnectionController` | `connect(ConnectionRequest)`, `getConnectionConfig()` | `ConnectionRequest(mode, testPspid, testApiKey, testApiSecret, testWebhooksKey, testWebhooksSecret, livePspid..., liveWebhooksSecret)`: kredencijali okruženja se prave samo ako je `apiKey` tog okruženja neprazan. `ConnectionResponse` → `[]`. `ConnectionConfigResponse` → `['webhookMode' => ...]` kad nema konekcije; inače i `mode`, `sandboxData` i `liveData` (pspid, apiKey, apiSecret, webhooksKey, webhooksSecret, **dešifrovano**). |
 | `GeneralSettingsAPI\Controller\GeneralSettingsController` | `getGeneralSettings()`, `savePaymentSettings(PaymentSettingsRequest)`, `saveLogSettings(LogSettingsRequest)`, `savePayByLinkSettings(PayByLinkSettingsRequest)`, `saveWebhookSettings(WebhookSettingsRequest)`, `disconnect()` | `GeneralSettingsResponse` → `accountSettings`, `paymentSettings`, `logSettings` (`debugMode`, `logDays`), `payByLinkSettings`, `webhookMode`, `webhookSettings`. Save* → `SaveSettingsResponse` `[]`. `disconnect()` → `DisconnectResponse` `[]`. |
-| `IntegrationAPI\Controller\IntegrationController` | `getState()` | `StateResponse` → `['state' => 'connection'|'payments']` (`payments` ako je konekcija sačuvana **i** validna kod Worldline-a: `ConnectionService::isLoggedIn` zove `testConnection`). |
+| `IntegrationAPI\Controller\IntegrationController` | `getState()` | `StateResponse` → `['state' => 'connection'\|'payments']` (`payments` ako je konekcija sačuvana **i** validna kod Worldline-a: `ConnectionService::isLoggedIn` zove `testConnection`). |
 | `LanguageAPI\Controller\LanguageController` | `getLanguages()` | `LanguageResponse` → `['EN' => ['code' => 'en', 'logo' => url], ...]`. |
 | `MonitoringAPI\Controller\LogsController` | `getMonitoringLogs(page = 1, size = 10, search = '')`, `downloadMonitoringLogs()`, `getWebhookLogs(...)`, `downloadWebhookLogs()` | `MonitoringLogsResponse` → `monitoringLogs[]`, `nextPageAvailable`, `beginning`, `end`, `numberOfItems`; `WebhookLogsResponse` isto sa `webhookLogs[]`; Download* → ceo niz logova. |
 | `PaymentAPI\Controller\PaymentController` | `list()`, `enable(productId, bool)`, `save(PaymentMethodRequest)`, `getPaymentMethod(productId)` | `PaymentMethodsResponse` → lista `[paymentProductId, name{locale,value}, paymentGroup, integrationTypes, enabled]`; `PaymentMethodResponse` → `paymentProductId, name[], enabled, template, additionalData{...po tipu}, paymentAction`. `save` i `enable` **zovu i `ShopPaymentService`**. `PaymentMethodRequest` ima 22 parametra konstruktora (productId, name[], enabled, template, paymentAction, vaultTitles, logo, enableGroupCards, paymentOption, sessionTimeout, intersolveProductId, recurrenceType, signatureType, instantPayment, enable3ds, enforceStrongAuthentication, enable3dsExemption, exemptionType, amount, flowType, authorizationMode, descriptor). |
@@ -831,19 +831,19 @@ i po potrebi cron/wakeup poziv `TaskRunnerWakeup::wakeup()` (npr. iz hook-a ili 
 | Async endpoint (`runProcess`) | `Configuration::getAsyncProcessUrl` | **nema** (kontroler `asyncprocess` ne postoji) |
 | Webhook endpoint | `WebhookAPI` | **nema** (`ConfigurationController` samo prikazuje URL module linka `webhook`) |
 | `ShopOrderService` | FQCN | **nema**; bez njega `StatusUpdateService` ne može da se konstruiše (puca svaki tok plaćanja i webhook) |
-| `ShopPaymentService` | FQCN | **nema**; bez njega `AdminAPI::payment()` i `DisconnectService` ne mogu da se konstruišu |
-| `LanguageService`, `LogoUrlService` | FQCN | **nema**; bez njih `PaymentService` (admin lista metoda) ne može da se konstruiše |
+| `ShopPaymentService` | FQCN | **ima**: `Plugin0\Infrastructure\ShopPaymentService`, zasad samo upisuje zapis u log (checkout još ne postoji, pa PrestaShop strana nema sopstveno stanje metoda) |
+| `LanguageService`, `LogoUrlService` | FQCN | **ima**: `LanguageService` daje aktivne jezike prodavnice sa ISO kodom velikim slovima (`'EN'`, `'SR'`, kako Core ključuje prevode); `LogoUrlService` daje `views/img/payment-methods/{productId}.svg` ili `.png` ako fajl postoji, inače `views/img/payment-method.svg` |
 | `VersionService` | FQCN | **nema**; samo `AdminAPI::version()` |
 | `CartProvider` implementacija | interfejs | **nema** (treba za checkout) |
 | Checkout front kontroleri, return/landing, admin akcije na narudžbini | PrestaShop strana | **nema** |
 | `brand.json` | `ActiveBrandProvider` | **ima** |
 | Tabela u bazi | `Installer::createTables` | **ima**: `plugin0_entity` sa 9 indeksnih kolona |
-| Admin strane | PrestaShop Symfony rute `config/routes.yml` | **ima**: Configuration (`/worldline/configuration`), Settings (`/worldline/settings`; Log level i Rows per page kao `ConfigEntity` ključevi `minLogLevel` i `rowsPerPage`), Logs (`/worldline/logs`, čita `ps_log`), `api_plugin0_core_info` |
+| Admin strane | PrestaShop Symfony rute `config/routes.yml` | **ima**: Configuration (`/worldline/configuration`), Payment methods (`/worldline/payment-methods`, `.../payment-methods/enable`, `.../payment-methods/{productId}`; lista, prekidač i forma nad `AdminAPI::payment()`), Settings (`/worldline/settings`; Log level i Rows per page kao `ConfigEntity` ključevi `minLogLevel` i `rowsPerPage`), Logs (`/worldline/logs`, čita `ps_log`), `api_plugin0_core_info` |
 
 Redosled implementacije koji sledi iz zavisnosti: (1) `QueueItemRepository` + async endpoint (jer i Hosted Tokenization bez
 3DS i disconnect i svi periodični taskovi zavise od toga), (2) `ShopOrderService` + `CartProvider` + checkout/return kontroleri,
-(3) webhook endpoint, (4) `ShopPaymentService`, `LanguageService`, `LogoUrlService`, `VersionService` + admin strane za metode
-plaćanja i podešavanja, (5) admin akcije capture/cancel/refund.
+(3) webhook endpoint, (4) `VersionService` i Core general settings (payment, log, pay by link, webhook) u adminu; tri servisa
+i stranice Payment methods i Settings iz tog koraka već postoje, (5) admin akcije capture/cancel/refund.
 
 ---
 

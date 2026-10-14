@@ -12,6 +12,27 @@ plugin0_configuration:
   defaults:
     _controller: 'Plugin0\Controller\Admin\ConfigurationController::indexAction'
     _legacy_controller: 'AdminPlugin0Configuration'
+plugin0_payment_methods:
+  path: /worldline/payment-methods
+  methods: [GET]
+  defaults:
+    _controller: 'Plugin0\Controller\Admin\PaymentMethodsController::listAction'
+    _legacy_controller: 'AdminPlugin0Configuration'
+# Pre rute sa {productId}: Symfony uzima prvu rutu koja odgovara, a "enable" bi odgovarao i obrascu productId-ja.
+plugin0_payment_method_enable:
+  path: /worldline/payment-methods/enable
+  methods: [POST]
+  defaults:
+    _controller: 'Plugin0\Controller\Admin\PaymentMethodsController::enableAction'
+    _legacy_controller: 'AdminPlugin0Configuration'
+plugin0_payment_method_edit:
+  path: /worldline/payment-methods/{productId}
+  methods: [GET, POST]
+  requirements:
+    productId: '[a-z0-9_]+'
+  defaults:
+    _controller: 'Plugin0\Controller\Admin\PaymentMethodsController::editAction'
+    _legacy_controller: 'AdminPlugin0Configuration'
 plugin0_settings:
   path: /worldline/settings
   methods: [GET, POST]

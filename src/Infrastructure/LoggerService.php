@@ -6,6 +6,7 @@ use Plugin0\Settings\LogLevel;
 use Plugin0\Settings\SettingsService;
 use PrestaShopLogger;
 use WOP\OnlinePayments\Core\Infrastructure\Logger\Interfaces\ShopLoggerAdapter;
+use WOP\OnlinePayments\Core\Infrastructure\Logger\LogContextData;
 use WOP\OnlinePayments\Core\Infrastructure\Logger\LogData;
 use WOP\OnlinePayments\Core\Infrastructure\Logger\Logger;
 
@@ -67,6 +68,25 @@ class LoggerService implements ShopLoggerAdapter
         // Šesti argument (allowDuplicate) = true: PrestaShop bi inače preskočio poruku identičnu nekoj koja je već u ps_log,
         // a core poruke moraju sve da stignu u log.
         PrestaShopLogger::addLog($message, self::SEVERITY[$level] ?? 1, null, null, null, true);
+    }
+
+    /**
+     * Kontekst zapisa u obliku koji Core deklariše za Logger::logInfo i ostale (LogContextData[]): svaki par
+     * ključ => vrednost postaje jedan LogContextData. Core bi običan niz i sam tako pretvorio (LogData konstruktor),
+     * ali njegov potpis traži LogContextData[], pa statička analiza običan niz prijavljuje.
+     *
+     * @param array<string, mixed> $pairs
+     *
+     * @return LogContextData[]
+     */
+    public static function context(array $pairs): array
+    {
+        $context = [];
+        foreach ($pairs as $name => $value) {
+            $context[] = new LogContextData((string) $name, $value);
+        }
+
+        return $context;
     }
 
     /** SettingsService zove posle upisa podešavanja, da novi nivo važi odmah, u istom procesu. */

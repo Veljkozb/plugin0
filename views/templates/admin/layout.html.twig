@@ -3,13 +3,21 @@
   bočni meni levo, stranica desno.
 
   - Configuration je uvek u meniju: na njoj nepovezana prodavnica postaje povezana.
-  - Ostale stavke se vide samo kad je prodavnica povezana, kao u demo projektu.
-  - Payment methods iz demo menija nije ovde, jer plugin0 tu stranicu još nema.
+  - Ostale stavke se vide samo kad je prodavnica povezana, kao u demo projektu, istim redom kao tamo.
   - Odjava i email iz dna demo menija nisu ovde, jer ih PrestaShop admin već ima u gornjoj traci.
 
-  Kontroler šalje: current_page ('configuration', 'settings' ili 'logs') i connected (true/false).
+  Kontroler šalje: current_page ('configuration', 'payment_methods', 'settings' ili 'logs') i connected (true/false).
 #}
 {% extends '@PrestaShop/Admin/layout.html.twig' %}
+
+{#
+  Stil stranica je u views/css/admin.css; asset('../modules/...') je način na koji PrestaShop moduli (npr.
+  blockwishlist) učitavaju svoje fajlove sa Symfony admin stranica: putanja je relativna na admin folder.
+#}
+{% block stylesheets %}
+{{ parent() }}
+<link rel="stylesheet" href="{{ asset('../modules/plugin0/views/css/admin.css') }}">
+{% endblock %}
 
 {% block content %}
 <div class="row">
@@ -21,6 +29,9 @@
                    class="list-group-item list-group-item-action{{ current_page == 'configuration' ? ' active' }}"
                    {% if current_page == 'configuration' %}aria-current="page"{% endif %}>Configuration</a>
                 {% if connected %}
+                <a href="{{ path('plugin0_payment_methods') }}"
+                   class="list-group-item list-group-item-action{{ current_page == 'payment_methods' ? ' active' }}"
+                   {% if current_page == 'payment_methods' %}aria-current="page"{% endif %}>Payment methods</a>
                 <a href="{{ path('plugin0_settings') }}"
                    class="list-group-item list-group-item-action{{ current_page == 'settings' ? ' active' }}"
                    {% if current_page == 'settings' %}aria-current="page"{% endif %}>Settings</a>

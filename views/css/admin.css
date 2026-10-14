@@ -1,0 +1,41 @@
+/*
+ * Zajednički stil admin stranica plugina (layout.html.twig ga učitava u bloku stylesheets), da liče na demo
+ * (Tailwind) u bojama i fontu PrestaShop admina: tabela bez okvira ćelija sa sivim velikim zaglavljem, kodovi
+ * zemalja i valuta kao "čipovi", polja forme sa razmakom, meta tekst ispod naslova.
+ *
+ * Klase plugin0-* koriste šabloni payment_methods.html.twig i payment_method.html.twig; text-muted, form-text,
+ * custom-switch i is-invalid su Bootstrap klase iz istih šablona kojima se ovde menja boja ili veličina.
+ */
+.plugin0-page { font-size: 1rem; color: #363a41; }
+.plugin0-page h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; }
+.plugin0-page .text-muted { color: #4f5962 !important; }
+.plugin0-page .form-text { color: #4f5962 !important; font-size: 0.875rem; }
+.plugin0-page h1 small { display: block; font-size: 0.9375rem; font-weight: 400; color: #4f5962; margin-top: 0.25rem; }
+.plugin0-table { width: 100%; font-size: 1rem; }
+.plugin0-table th { padding: 0.75rem 1.5rem 0.75rem 0; border: 0; border-bottom: 2px solid #8c9ba3; font-size: 0.875rem; letter-spacing: 0.05em; text-transform: uppercase; color: #25292e; font-weight: 700; white-space: nowrap; }
+.plugin0-table td { padding: 1.25rem 1.5rem 1.25rem 0; border: 0; border-bottom: 1px solid #c9d2d6; vertical-align: middle; color: #363a41; }
+/* Isključena metoda: običan (ne podebljan) tekst, bez providnosti, jer je većina kataloga isključena pa bi cela tabela bila bleda. */
+.plugin0-table tr.plugin0-off td { font-weight: 400; color: #4f5962; }
+.plugin0-table .custom-switch { transform: scale(1.25); transform-origin: left center; }
+.plugin0-tag { display: inline-flex; align-items: center; justify-content: center; min-width: 3rem; padding: 0.125rem 0.5rem; margin-right: 0.25rem; border: 1px solid #8c9ba3; border-radius: 9999px; background: #eef1f2; font-family: SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9375rem; font-weight: 600; color: #25292e; }
+.plugin0-tag.plugin0-off { opacity: 0.6; text-decoration: line-through; }
+.plugin0-tag button { border: 0; background: none; padding: 0 0.25rem; margin-left: 0.25rem; border-radius: 9999px; color: #4f5962; line-height: 1; cursor: pointer; }
+.plugin0-tag button:hover { background: #dfdfdf; color: #363a41; }
+.plugin0-codes { position: relative; display: inline-flex; align-items: center; }
+.plugin0-more { background: #fff; cursor: pointer; }
+.plugin0-more:hover { background: #f6f6f6; }
+.plugin0-more span { font-size: 8px; margin-left: 0.25rem; }
+.plugin0-more[aria-expanded="true"] span { display: inline-block; transform: rotate(180deg); }
+.plugin0-codes-all { position: absolute; left: 0; top: 100%; z-index: 10; margin-top: 0.25rem; display: flex; flex-direction: column; width: 6rem; max-height: 13rem; overflow-y: auto; border: 1px solid #8c9ba3; background: #fff; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); }
+.plugin0-codes-all span { padding: 0.25rem 0.5rem; border-bottom: 1px solid #dfe4e6; font-family: SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8125rem; color: #25292e; }
+.plugin0-codes-all span:last-child { border-bottom: 0; }
+.plugin0-field { margin-bottom: 1.25rem; }
+.plugin0-field > label, .plugin0-field > legend { font-size: 1rem; font-weight: 700; color: #25292e; margin-bottom: 0.25rem; }
+.plugin0-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; min-height: 2.75rem; padding: 0.25rem 0.5rem; border: 1px solid #8c9ba3; background: #fff; }
+.plugin0-tags.is-invalid { border-color: #f54c3e; }
+.plugin0-tags select { flex: 1; min-width: 6rem; border: 0; background: transparent; padding: 0.25rem; font-size: 1rem; color: #363a41; }
+.plugin0-tags select:disabled { color: #6c868e; }
+.plugin0-mono { font-family: SFMono-Regular, Menlo, Consolas, monospace; }
+.plugin0-radio small { display: block; color: #4f5962; }
+.plugin0-actions { display: flex; align-items: center; gap: 1rem; margin-top: 2rem; }
+.plugin0-actions a { text-decoration: underline; color: #363a41; }

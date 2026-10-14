@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="40" viewBox="0 0 64 40" role="img" aria-label="Payment method">
+  <rect x="1" y="1" width="62" height="38" rx="4" fill="#ffffff" stroke="#6c868e" stroke-width="2"/>
+  <rect x="1" y="9" width="62" height="7" fill="#6c868e"/>
+  <rect x="8" y="24" width="22" height="5" rx="1" fill="#bbcdd2"/>
+</svg>

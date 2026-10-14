@@ -6,8 +6,8 @@ use PrestaShopBundle\Controller\Admin\FrameworkBundleAdminController;
 use WOP\OnlinePayments\Core\Bootstrap\ApiFacades\AdminConfig\AdminAPI\AdminAPI;
 
 /**
- * Zajednički deo stranica koje postoje samo dok je prodavnica povezana sa Worldline-om: Settings, Logs,
- * kasnije Payment methods. U demu su te stranice iza "connected" middleware-a; ovde svaki kontroler na početku
+ * Zajednički deo stranica koje postoje samo dok je prodavnica povezana sa Worldline-om: Payment methods, Settings
+ * i Logs. U demu su te stranice iza "connected" middleware-a; ovde svaki kontroler na početku
  * pita isConnected() i nepovezanu prodavnicu vodi na Configuration, gde ona postaje povezana.
  */
 abstract class ConnectedController extends FrameworkBundleAdminController
