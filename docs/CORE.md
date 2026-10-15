@@ -817,7 +817,7 @@ i po potrebi cron/wakeup poziv `TaskRunnerWakeup::wakeup()` (npr. iz hook-a ili 
 
 ## 8. Šta plugin mora da obezbedi i stanje plugin0
 
-| Obaveza | Core ključ / mehanizam | plugin0 (grana `feature/MIDU-1218`) |
+| Obaveza | Core ključ / mehanizam | plugin0 (grana `feature/MIDU-1221`) |
 |---|---|---|
 | Bootstrap podklasa i poziv `bootstrap()` na svakom ulazu | `Bootstrap\BootstrapComponent` | **ima**: `Plugin0\Bootstrap::boot()` iz `actionDispatcherBefore`, `install`, `uninstall`, admin kontrolera |
 | `Configuration` podklasa | `Configuration::CLASS_NAME` | **ima**: `Plugin0\Configuration` (`getAsyncProcessUrl` → module link `asyncprocess`) |
@@ -830,18 +830,19 @@ i po potrebi cron/wakeup poziv `TaskRunnerWakeup::wakeup()` (npr. iz hook-a ili 
 | Repozitorijum za `QueueItem` (`QueueItemRepository`) | `RepositoryRegistry::getQueueItemRepository` | **nema** (namerno, vidi komentar u `Bootstrap::initRepositories`) |
 | Async endpoint (`runProcess`) | `Configuration::getAsyncProcessUrl` | **nema** (kontroler `asyncprocess` ne postoji) |
 | Webhook endpoint | `WebhookAPI` | **nema** (`ConfigurationController` samo prikazuje URL module linka `webhook`) |
-| `ShopOrderService` | FQCN | **nema**; bez njega `StatusUpdateService` ne može da se konstruiše (puca svaki tok plaćanja i webhook) |
+| `ShopOrderService` | FQCN | **ima**: `Plugin0\Infrastructure\ShopOrderService`; pravi narudžbinu posle plaćanja (`validateOrder`) i menja joj status, idempotentno, pod MySQL `GET_LOCK` po korpi (vidi OKRUZENJE.md 14.7) |
 | `ShopPaymentService` | FQCN | **ima**: `Plugin0\Infrastructure\ShopPaymentService`, zasad samo upisuje zapis u log (checkout još ne postoji, pa PrestaShop strana nema sopstveno stanje metoda) |
 | `LanguageService`, `LogoUrlService` | FQCN | **ima**: `LanguageService` daje aktivne jezike prodavnice sa ISO kodom velikim slovima (`'EN'`, `'SR'`, kako Core ključuje prevode); `LogoUrlService` daje `views/img/payment-methods/{productId}.svg` ili `.png` ako fajl postoji, inače `views/img/payment-method.svg` |
 | `VersionService` | FQCN | **nema**; samo `AdminAPI::version()` |
-| `CartProvider` implementacija | interfejs | **nema** (treba za checkout) |
-| Checkout front kontroleri, return/landing, admin akcije na narudžbini | PrestaShop strana | **nema** |
+| `CartProvider` implementacija | interfejs | **ima**: `Plugin0\Checkout\PrestaShopCartProvider` (merchantReference = ID korpe), umotan u Core `RoundingTotalsCartProvider` i `MemoryCachingCartProvider` |
+| Checkout front kontroleri, return/landing, admin akcije na narudžbini | PrestaShop strana | **ima** za Hosted Checkout (tip Redirect): `controllers/front/payment.php` (`createSession` + redirect), `controllers/front/return.php` (`updateOrderStatus`, `getPaymentOutcome`, po potrebi `startWaitingForOutcome`); Hosted Tokenization (iFrame) i admin akcije **nema** |
 | `brand.json` | `ActiveBrandProvider` | **ima** |
 | Tabela u bazi | `Installer::createTables` | **ima**: `plugin0_entity` sa 9 indeksnih kolona |
 | Admin strane | PrestaShop Symfony rute `config/routes.yml` | **ima**: Configuration (`/worldline/configuration`, nad `AdminAPI::connection()`), Payment methods (`/worldline/payment-methods`, `.../create`, `.../{id}/edit`, `.../{id}/active`, `.../{id}/delete`; metode iz demo projekta, `Logeecom\PaymentMethods` nad `Plugin0\Entity\PaymentMethodEntity` u `ps_plugin0_entity`, ne Core `AdminAPI::payment()`), Settings (`/worldline/settings`; demo `Logeecom\Settings` nad `ConfigEntity` ključevima `minLogLevel`, `defaultCurrency` i `rowsPerPage`), Logs (`/worldline/logs`, čita `ps_log`), `api_plugin0_core_info`; front: `controllers/front/payment.php` i hook `paymentOptions` (vidi OKRUZENJE.md 14) |
 
 Redosled implementacije koji sledi iz zavisnosti: (1) `QueueItemRepository` + async endpoint (jer i Hosted Tokenization bez
-3DS i disconnect i svi periodični taskovi zavise od toga), (2) `ShopOrderService` + `CartProvider` + checkout/return kontroleri,
+3DS i disconnect i svi periodični taskovi zavise od toga), (2) `ShopOrderService` + `CartProvider` + checkout/return kontroleri
+(urađeno za Hosted Checkout u MIDU-1221, pre koraka 1, jer Hosted Checkout red zadataka ne traži),
 (3) webhook endpoint, (4) `VersionService` i Core general settings (payment, log, pay by link, webhook) u adminu; tri servisa
 i stranice Payment methods i Settings iz tog koraka već postoje, (5) admin akcije capture/cancel/refund.
 
@@ -871,6 +872,13 @@ i stranice Payment methods i Settings iz tog koraka već postoje, (5) admin akci
 20. **`TaskRunner` zauzima HTTP radnika oko `wakeupDelay` (5 s) + batch vreme** po ciklusu, neprekidno. Na serveru sa malo PHP-FPM procesa to treba uzeti u obzir (zapažanje iz koda; dimenzionisanje je neprovereno).
 21. **`PaymentTransactionEntity` JSON ključ `cratedAt`** (slovna greška) je deo formata podataka; ne "popravljati" u plugin repozitorijumu.
 22. **`LoggerConfiguration` kešira `integrationName`**; `Configuration::getIntegrationName()` mora da radi i kad plugin još nije instaliran do kraja (plugin0 vraća konstantu).
+23. **`returnHmac = null` isključuje proveru.** `PaymentTransactionRepository::findPaymentTransactionEntity` dodaje uslov po `returnHmac` samo kad nije `null`; sa `null` transakciju nalazi samo po payment ID-ju. Povratna strana zato mora sama da odbije prazan ili izostavljen RETURNMAC pre poziva Core-a.
+24. **Jedan povratak, dva `updateOrderStatus`.** `WaitPaymentOutcomeProcess::startWaiting` ga zove u `getPaymentOutcome` (kad čekanje istekne, a status je i dalje pending) i još jednom na kraju; `ShopOrderService::createShopOrder` mora da bude idempotentan i bez ponovljenih zahteva.
+25. **`lockOrderCreation` nije atomičan** nad tabelom bez unique ključa (prvo `selectOne`, pa `save`); dva istovremena zahteva mogu oba da dobiju "lock". Plugin0 zato drži MySQL `GET_LOCK` po korpi u `ShopOrderService`.
+26. **Bez webhook-a `startWaitingForOutcome` uvek čeka ~10 s.** Petlja čita samo lokalni status transakcije (0 dok ga niko ne ažurira) i tek kad čekanje istekne pita Worldline; zato plugin0 na povratku prvo zove `updateOrderStatus`.
+27. **Proizvodi iz `PaymentProductId::SEPARATE_CAPTURE_SUPPORTED` traže Core `PaymentMethodConfigEntity`.** `CreateHostedCheckoutRequestTransformer` za njih zove `$config->getPaymentAction()` bez provere na `null`; bez uključene Core metode `createSession` vraća `general.unhandled` ("Call to a member function getPaymentAction() on null"), provereno za 302 (Apple Pay) 2026-10-14. Kartični brendovi (npr. 1 = Visa) tu granu ne prolaze.
+28. **`void` metode fasade** (npr. `PaymentController::startWaitingForOutcome`) kroz `ErrorHandlingAspect` vraćaju `null` kad uspeju, a `TranslatableErrorResponse` kad ne uspeju; proverava se `instanceof Response && !isSuccessful()`.
+29. **`PaymentModule::validateOrder` zove `die()`**, ne baca izuzetak, kad za korpu već postoji narudžbina, kad se `secure_key` ne slaže i kad modul nije aktivan (PrestaShop 8.2.4, `classes/PaymentModule.php`); te uslove `ShopOrderService` proverava pre poziva. `validateOrder` i menja `Context` (cart, customer, language, currency, shop).
 
 ---
 

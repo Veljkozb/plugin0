@@ -42,6 +42,8 @@ use Plugin0\Infrastructure\ShopPaymentService;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\Language\LanguageService as LanguageServiceInterface;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\Logo\LogoUrlService as LogoUrlServiceInterface;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\Payment\ShopPaymentService as ShopPaymentServiceInterface;
+use Plugin0\Infrastructure\ShopOrderService;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\ShopOrderService as ShopOrderServiceInterface;
 
 class Bootstrap extends BootstrapComponent
 {
@@ -106,6 +108,11 @@ class Bootstrap extends BootstrapComponent
 
         ServiceRegister::registerService(ShopPaymentServiceInterface::class, static function () {
             return new ShopPaymentService();
+        });
+
+        // Bez njega Core ne može da napravi StatusUpdateService, pa ni da obradi povratak kupca sa Worldline strane.
+        ServiceRegister::registerService(ShopOrderServiceInterface::class, static function () {
+            return new ShopOrderService();
         });
     }
 

@@ -1,22 +1,33 @@
 <?php
 /**
- * Front controller "payment" modula plugin0: stranica na koju kupca vodi opcija plaćanja izabrana na checkout-u
- * (Plugin0::hookPaymentOptions). Adresa: index.php?fc=module&module=plugin0&controller=payment
- * (Link::getModuleLink); metoda stiže kao POST polje "method" (id).
+ * Front controller "payment" modula plugin0: ovde stiže klik na PLACE ORDER. Klasična tema (themes/core.js) šalje
+ * formu izabrane opcije plaćanja (Plugin0::hookPaymentOptions): POST na
+ * index.php?fc=module&module=plugin0&controller=payment, polje "method" = id metode.
  *
- * Za sada samo potvrđuje izbor: proverava da je metoda i dalje dostupna za korpu (aktivna, valuta korpe, zemlja
- * adrese za fakturu) i prikazuje je. Samo plaćanje, Worldline Hosted Checkout za tip Redirect i Hosted Tokenization
- * za tip iFrame, dolazi u sledećem koraku kroz Core CheckoutAPI; tada ova stranica pravi sesiju i šalje kupca dalje.
+ * Redosled:
+ * 1. proveri da je metoda i dalje dostupna za korpu (AvailablePaymentMethods: aktivna, Redirect, Code poznat
+ *    Core-u, valuta korpe, zemlja adrese za fakturu), jer je kupac posle prikaza izbora mogao da promeni korpu;
+ * 2. Core pravi Worldline Hosted Checkout sesiju (POST /hostedcheckouts) od korpe (PrestaShopCartProvider), sa
+ *    Code-om metode kao jedinim proizvodom na Worldline strani, i čuva PaymentTransaction (ID korpe,
+ *    hostedCheckoutId, RETURNMAC) u ps_plugin0_entity;
+ * 3. kupac ide na Worldline stranu; posle plaćanja Worldline ga vraća na front controller "return".
+ *
+ * Narudžbina ovde ne nastaje: pravi je ShopOrderService tek kad Core na povratku utvrdi da je plaćeno.
  */
+
+use Plugin0\Checkout\AvailablePaymentMethods;
+use Plugin0\Checkout\PrestaShopCartProvider;
+use WOP\OnlinePayments\Core\Bootstrap\ApiFacades\PaymentProcessor\CheckoutAPI\CheckoutAPI;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\HostedCheckout\HostedCheckoutSessionRequest;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\PaymentMethod\PaymentProductId;
+
 class Plugin0PaymentModuleFrontController extends ModuleFrontController
 {
     /** @var bool stranica plaćanja ide samo preko HTTPS-a, kao kod ps_wirepayment */
     public $ssl = true;
 
-    public function initContent()
+    public function postProcess()
     {
-        parent::initContent();
-
         \Plugin0\Bootstrap::boot();
 
         $cart = $this->context->cart;
@@ -34,7 +45,7 @@ class Plugin0PaymentModuleFrontController extends ModuleFrontController
 
         $id = (int) Tools::getValue('method');
         $method = null;
-        foreach (\Plugin0\Checkout\AvailablePaymentMethods::forCart($cart) as $available) {
+        foreach (AvailablePaymentMethods::forCart($cart) as $available) {
             if ($available->id === $id) {
                 $method = $available;
                 break;
@@ -48,20 +59,27 @@ class Plugin0PaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        $presented = \Plugin0\Services::paymentMethods()->present($method);
+        // Code je proveren u AvailablePaymentMethods (PaymentProductId::isSupported), pa parse ovde ne baca izuzetak.
+        $response = CheckoutAPI::get()->hostedCheckout((string) $this->context->shop->id)->createSession(
+            new HostedCheckoutSessionRequest(
+                PrestaShopCartProvider::for($cart),
+                $this->context->link->getModuleLink($this->module->name, 'return', [], true),
+                PaymentProductId::parse($method->code)
+            )
+        );
 
-        $this->context->smarty->assign([
-            'method_name' => $presented['name'],
-            'method_code' => $presented['code'],
-            'type_label' => $presented['type_label'],
-            'type_description' => $presented['type_description'],
-            'total' => $this->context->getCurrentLocale()->formatPrice(
-                $cart->getOrderTotal(true, Cart::BOTH),
-                $this->context->currency->iso_code
-            ),
-            'back_url' => $this->context->link->getPageLink('order', true, null, 'step=3'),
-        ]);
+        if (!$response->isSuccessful()) {
+            // Fasada ne baca izuzetak: grešku je ErrorHandlingAspect već upisao u log i vratio kao odgovor.
+            $this->errors[] = $this->trans(
+                'The payment could not be started. Please try again or choose another payment method.',
+                [],
+                'Modules.Plugin0.Shop'
+            );
+            $this->redirectWithNotifications($this->context->link->getPageLink('order', true));
 
-        $this->setTemplate('module:plugin0/views/templates/front/payment.tpl');
+            return;
+        }
+
+        Tools::redirect($response->getRedirectUrl());
     }
 }

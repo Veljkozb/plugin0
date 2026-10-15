@@ -1008,7 +1008,8 @@ plugin0/
 ├── config/
 │   ├── routes.yml                  ← Symfony admin rute
 │   └── brand.json                  ← Worldline endpoint-i (live i test), predaje se Core-u
-├── controllers/front/payment.php   ← front controller "payment": stranica posle izbora metode na checkout-u
+├── controllers/front/payment.php   ← front controller "payment": klik na PLACE ORDER, Worldline sesija, preusmeravanje
+├── controllers/front/return.php    ← front controller "return": povratak sa Worldline strane, ishod, narudzbina (14.7)
 ├── lib/Logeecom/                   ← demo projekat, poslovni sloj bez framework-a, bajt-identican demo src/
 │   ├── Configuration/              ← jos nije povezan: Configuration stranica ostaje na Core-u do Worldline koraka
 │   ├── Logs/                       ← jos nije povezan: Logs stranica cita ps_log kroz LogReader (tiket trazi kontekst)
@@ -1019,7 +1020,7 @@ plugin0/
 │   ├── Configuration.php           ← Core Configuration za PrestaShop (i kljucevi podesavanja)
 │   ├── Services.php                ← fabrika demo servisa: koja implementacija stoji iza kog demo interfejsa
 │   ├── Adapter/                    ← demo interfejsi nad Core-om i PrestaShop-om (repozitorijumi, logger, applier)
-│   ├── Checkout/                   ← AvailablePaymentMethods: koje metode vaze za korpu
+│   ├── Checkout/                   ← AvailablePaymentMethods (koje metode vaze za korpu), PrestaShopCartProvider
 │   ├── Controller/Admin/           ← Symfony kontroleri admin stranica
 │   ├── Entity/                     ← PaymentMethodEntity: demo metoda kao Core entitet u ps_plugin0_entity
 │   ├── Form/                       ← PaymentMethodForm: pravila forme iz demo Form Request-a
@@ -1027,7 +1028,7 @@ plugin0/
 ├── tests/                          ← demo unit testovi i in-memory repozitorijumi (Tests\ → tests/)
 ├── views/
 │   ├── templates/admin/*.html.twig ← sabloni admin stranica
-│   ├── templates/front/payment.tpl ← sablon front controller-a "payment"
+│   ├── templates/front/return.tpl  ← "placanje se obradjuje" (front controller "return")
 │   └── img/                        ← placeholder logo; logotipi metoda u payment-methods/
 └── docs/                           ← CORE.md i ovaj dokument
 ```
@@ -1036,12 +1037,12 @@ plugin0/
 
 | Metoda | Kada je PrestaShop zove | Sta radi |
 |---|---|---|
-| `__construct()` | kad god ucitava modul | ime, verzija, autor, opis; `currencies = true`, `currencies_mode = 'checkbox'`, `controllers = ['payment']` (svojstva koja `PaymentModule` trazi) |
+| `__construct()` | kad god ucitava modul | ime, verzija, autor, opis; `currencies = true`, `currencies_mode = 'checkbox'`, `controllers = ['payment', 'return']` (svojstva koja `PaymentModule` trazi) |
 | `install()` | dugme Install | `Bootstrap::boot()`, `parent::install()` (`PaymentModule::install`: i redovi u `module_currency`, `module_country`, `module_carrier`), `Installer::createTables()`, `registerHook('actionDispatcherBefore')`, `registerHook('paymentOptions')` |
 | `uninstall()` | dugme Uninstall | `Bootstrap::boot()`, `Installer::dropTables()` (**brise `ps_plugin0_entity`**), `parent::uninstall()` |
 | `getContent()` | dugme Configure | preusmerava na rutu `plugin0_configuration` |
 | `hookActionDispatcherBefore()` | jednom po zahtevu (front, module front controller-i, legacy admin, Symfony admin); ne okida se iz `bin/console` ni webservice-a | `Bootstrap::boot()` |
-| `hookPaymentOptions($params)` | korak placanja na checkout-u (`CheckoutPaymentStep` preko `PaymentOptionsFinder`), sa korpom u `$params['cart']` | jedna `PaymentOption` po metodi iz `Checkout\AvailablePaymentMethods::forCart`; tekst = ime metode, `action` = front controller `payment`, POST polje `method` = id metode |
+| `hookPaymentOptions($params)` | korak placanja na checkout-u (`CheckoutPaymentStep` preko `PaymentOptionsFinder`), sa korpom u `$params['cart']` | jedna `PaymentOption` po metodi iz `Checkout\AvailablePaymentMethods::forCart` (aktivna, tip Redirect, Code = Worldline ID proizvoda koji Core podrzava, valuta korpe, zemlja adrese za fakturu); tekst = ime metode, `action` = front controller `payment`, POST polje `method` = id metode |
 | `checkCurrency($cart)` | iz `hookPaymentOptions` i iz front controller-a | PrestaShop-ovo ogranicenje valuta modula (`module_currency`), kao u `ps_wirepayment` |
 
 U `install()` se Core podize rucno, jer hook u tom trenutku jos nije registrovan. Modul u dev prodavnici je bio
@@ -1068,6 +1069,7 @@ implementaciju.
 | `LanguageService` | `Infrastructure\LanguageService` | aktivni jezici prodavnice |
 | `LogoUrlService` | `Infrastructure\LogoUrlService` | URL logotipa metoda (`views/img/payment-methods/{productId}.svg\|png`) |
 | `ShopPaymentService` | `Infrastructure\ShopPaymentService` | samo loguje Core radnje nad Worldline podesavanjima metoda (save, enable, disconnect); metode iz dema ne dira |
+| `ShopOrderService` | `Infrastructure\ShopOrderService` | pravi PrestaShop narudzbinu posle placanja i menja joj status; jedino mesto koje to radi (14.7) |
 
 **Repozitorijumi** (`initRepositories()`, preko `RepositoryRegistry::registerRepository`):
 - `BaseRepository` (tabela `ps_plugin0_entity`) za: `ConfigEntity`, `Process`, `LogData`,
@@ -1099,7 +1101,9 @@ implementaciju.
 - Settings, Payment methods i Logs nasledjuju `ConnectedController`: postoje samo dok je prodavnica povezana sa
   Worldline-om, inace vode na Configuration.
 - Front strana: `index.php?fc=module&module=plugin0&controller=payment` (`controllers/front/payment.php`,
-  `Link::getModuleLink('plugin0', 'payment')`), stranica na koju vodi opcija placanja izabrana na checkout-u.
+  `Link::getModuleLink('plugin0', 'payment')`), kuda vodi PLACE ORDER, i
+  `index.php?fc=module&module=plugin0&controller=return` (`controllers/front/return.php`; sa friendly URL-ovima
+  `/en/module/plugin0/return`), kuda Worldline vraca kupca. Oba su opisana u 14.7.
 
 Ukratko sta stranice rade:
 - **Configuration**: unos i provera kredencijala po okruzenju (test/live), prikaz stanja i diskonekcija, preko
@@ -1144,6 +1148,93 @@ docker exec -u 1000:1000 -e HOME=/tmp/plugin0-home -w /var/www/html/public/prest
 ```
 
 Detalji Core API-ja su u [CORE.md](CORE.md).
+
+### 14.7 Checkout: placanje preko Worldline Hosted Checkout strane
+
+Tiket MIDU-1221. Placanje vodi Core (`CheckoutAPI`); plugin povezuje PrestaShop sa njim i ne tumaci status placanja.
+
+**Tok od klika na PLACE ORDER:**
+
+1. `themes/core.js` klasicne teme salje formu izabrane opcije (`#pay-with-<id>-form form`): POST na front controller
+   `payment`, polje `method` = id metode (forma iz `Plugin0::hookPaymentOptions`).
+2. `payment` ponovo proverava korpu i metodu (`AvailablePaymentMethods::forCart`), pa zove
+   `CheckoutAPI::get()->hostedCheckout($storeId)->createSession(new HostedCheckoutSessionRequest(PrestaShopCartProvider::for($cart), $returnUrl, PaymentProductId::parse($method->code)))`.
+   `returnUrl` = `Link::getModuleLink('plugin0', 'return', [], true)`.
+3. Core salje Worldline-u `POST /hostedcheckouts` (sandbox: `payment.preprod.direct.worldline-solutions.com`) i
+   cuva `PaymentTransaction` u `ps_plugin0_entity` (tip `PaymentTransaction`; merchantReference = ID korpe,
+   paymentId = hostedCheckoutId + `_0`, returnHmac = RETURNMAC, status 0).
+4. Greska → kupac nazad na korak placanja sa porukom; uspeh → `Tools::redirect($response->getRedirectUrl())`.
+5. Worldline vraca kupca na `return` i dodaje query parametre `hostedCheckoutId` i `RETURNMAC`.
+6. `return`: bez ispravnog `hostedCheckoutId` (isti obrazac kao Core `PaymentId`) i nepraznog `RETURNMAC`-a
+   odmah nazad na korak placanja. Inace `CheckoutAPI::get()->payment($storeId)->updateOrderStatus(...)` (Core odmah
+   pita Worldline `GET /payments/{id}/details` i zove `ShopOrderService`), pa `getPaymentOutcome(...)`; ako je
+   placanje i dalje u obradi (`isWaiting()`), `startWaitingForOutcome(...)` (Core ceka najvise 10 s od povratka).
+7. Kupac ide na: `order-confirmation` (narudzbina postoji i pripada ulogovanom kupcu), korak placanja sa porukom
+   "otkazano" (status 1 ili 6) ili "odbijeno" (status 2), korak placanja sa porukom "nije potvrdjeno" (greska ili
+   lazni povratak), ili stranicu `return.tpl` "placanje se obradjuje" (status u obradi, narudzbina ne postoji).
+
+**Kada nastaje narudzbina: posle placanja.** Obrazlozenje:
+- Core je tako napravljen: `ShopOrderService::createShopOrder` "creates shop order from belonging cart if it doesn't
+  already exist", `cancelShopOrder` "(if order is even created)"; `StatusUpdateService` zove `createShopOrder` samo
+  kad je placen ceo iznos (`isFullyPaid`) i status 5 ili 9, ili uz ceo iznos kad istekne cekanje na konacan status.
+- PrestaShop dozvoljava jednu narudzbinu po korpi (`PaymentModule::validateOrder` odbija korpu sa narudzbinom).
+  Narudzbina pre placanja bi za svaki otkazan pokusaj ostavila otkazanu narudzbinu, skidala i vracala zalihe, slala
+  mejlove i trazila novu korpu za novi pokusaj. Ovako otkazan ili odbijen pokusaj ne ostavlja nista, a korpa ostaje.
+- Cena: ako kupac plati i zatvori browser pre povratka, narudzbina ne nastaje dok neko ne pozove `updateOrderStatus`
+  (webhook ili `TransactionStatusCheckTask`; nijedno jos nije povezano).
+
+**Bezbednost povratka:** adresa `return` je javna. Core transakciju trazi po paru payment ID + RETURNMAC
+(`PaymentTransactionRepository::get`), a status uvek cita od Worldline-a, nikad iz URL-a. Prazan RETURNMAC plugin
+odbija pre Core-a, jer Core uslov po returnHmac dodaje samo kad nije `null`. Provereno na sandbox-u 2026-10-14:
+pogresan RETURNMAC i tudji ID sa pravim RETURNMAC-om daju `PaymentProcessor.paymentTransactionNotFound`; adresa bez
+parametara, sa laznim RETURNMAC-om, sa `hostedCheckoutId` koji nije broj i sa `RETURNMAC[]` vraca 302 na `/en/order`.
+
+**Statusi na jednom mestu i idempotentnost:** samo `Infrastructure\ShopOrderService` zove
+`PaymentModule::validateOrder` i `OrderHistory::changeIdOrderState` (provera:
+`grep -rn "validateOrder\|changeIdOrderState\|setCurrentState" src controllers plugin0.php`). Isti ishod stize vise
+puta (Core ga i pri jednom povratku obradi dvaput, kupac moze da osvezi stranicu, kasnije i webhook), pa:
+- sve izmene jedne korpe idu pod MySQL `GET_LOCK('plugin0_cart_<id>_<baza>')`, jer Core `lockOrderCreation` nad
+  `ps_plugin0_entity` nije atomican;
+- narudzbina se pravi samo ako `ps_orders` za korpu nema red;
+- status se menja samo u status u kome narudzbina jos nije bila (`ps_order_history`), pa ponovljen poziv ne dodaje
+  red istorije, mejl ni belesku i ne vraca narudzbinu koju je trgovac vec pomerio dalje;
+- interna beleska "Worldline payment ID: ..." nastaje samo pri kreiranju (`validateOrder`, `$message`);
+- narudzbinu u stanju `PS_OS_ERROR` plugin ne pomera (to stanje `validateOrder` sam postavlja kad se naplaceni iznos
+  ne slaze sa korpom).
+
+**Iznos:** `PrestaShopCartProvider` salje `Cart::getOrderTotal(true, Cart::BOTH)` kao `Amount::fromFloat` (ceo broj
+u najmanjim jedinicama valute); Core `RoundingTotalsCartProvider` dodaje stavku `rounding` kad se zbir stavki zbog
+zaokruzivanja po redu ne slaze sa ukupnim iznosom (korpa 9: 22,944 → 2294 + rounding 6 = 2300 RSD). `validateOrder`
+dobija iznos koji je Worldline naplatio.
+
+**Provereno u browseru 2026-10-15** (sandbox `logeecom35`, valuta EUR, adresa RS, metoda "Viza payment", code 1):
+- uspesno placanje (Visa `4330264936344675`, 3-D Secure frictionless): korpa 9 → narudzbina 8 (14,28 EUR), korpa 10
+  → narudzbina 9 (22,94 EUR); stanje "Payment accepted", jedan red istorije, jedna uplata sa Worldline payment ID-jem,
+  iznos jednak iznosu na Worldline strani do centa;
+- ponovno otvaranje istog `return` URL-a (korpa 10): preusmerenje na potvrdu iste narudzbine, bez nove narudzbine,
+  reda istorije, uplate, beleske i log zapisa "Order created";
+- izmenjen jedan znak u RETURNMAC-u, odnosno u `hostedCheckoutId`: Core vraca "Payment transaction ... not found",
+  302 na `/en/order`, nista se ne menja;
+- Cancel na Worldline strani (korpa 11): Core status 1, zuta poruka "The payment was cancelled...", korpa ostaje,
+  narudzbina ne nastaje;
+- odbijen 3-D Secure (Worldline ACS simulator, `transStatus` N/R; strana sa JSON-om postoji samo u sandbox-u, u
+  produkciji je to strana banke kupca): Core status 2, crvena poruka "The payment was refused...", korpa ostaje,
+  narudzbina ne nastaje.
+
+**Sta nije pokriveno:**
+- metode tipa iFrame (Hosted Tokenization) se ne nude na checkout-u;
+- webhook i provera u pozadini (narudzbina kad kupac ne dodje do `return`);
+- sandbox nalog `logeecom35` nudi proizvode samo u EUR, GBP i CHF (`GET /products` 2026-10-14, iznos 2300: FR/EUR,
+  RS/EUR, GB/GBP i CH/CHF po 12 proizvoda, medju njima 1 = Visa, ali ne 302 = Apple Pay; 0 za RSD, BZD, INR, MXN,
+  USD, PLN, DKK, SEK, CZK, HUF, CAD, AUD i JPY, i za FR/RSD), pa placanje u valutama dev prodavnice vraca
+  `UNKNOWN_PRODUCT_ID`;
+- proizvodi iz Core `PaymentProductId::SEPARATE_CAPTURE_SUPPORTED` (npr. 302 Apple Pay, 320 Google Pay, 840 PayPal)
+  padaju u `createSession` dok za njih ne postoji Core `PaymentMethodConfigEntity` ("Call to a member function
+  getPaymentAction() on null" u `CreateHostedCheckoutRequestTransformer`), pa ih `AvailablePaymentMethods` od
+  2026-10-15 ne nudi na checkout-u (demo metoda "Appla Pay", code 302, se zato ne prikazuje);
+- kad je korpa vec narucena (npr. izmenjen RETURNMAC za vec placenu korpu), poruka "The payment could not be
+  confirmed..." se ne vidi: `/en/order` prazne korpe odmah preusmerava na `/en/cart?action=show` (2026-10-15);
+  narudzbina i statusi pritom ostaju netaknuti.
 
 ---
 
