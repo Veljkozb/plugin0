@@ -1010,6 +1010,7 @@ plugin0/
 │   └── brand.json                  ← Worldline endpoint-i (live i test), predaje se Core-u
 ├── controllers/front/payment.php   ← front controller "payment": klik na PLACE ORDER, Worldline sesija, preusmeravanje
 ├── controllers/front/return.php    ← front controller "return": povratak sa Worldline strane, ishod, narudzbina (14.7)
+├── src/Order/                      ← panel za placanje na admin stranici narudzbine: PaymentManager, OperationValidator, MinorUnits, OperationLog (14.8)
 ├── lib/Logeecom/                   ← demo projekat, poslovni sloj bez framework-a, bajt-identican demo src/
 │   ├── Configuration/              ← jos nije povezan: Configuration stranica ostaje na Core-u do Worldline koraka
 │   ├── Logs/                       ← jos nije povezan: Logs stranica cita ps_log kroz LogReader (tiket trazi kontekst)
@@ -1022,10 +1023,10 @@ plugin0/
 │   ├── Adapter/                    ← demo interfejsi nad Core-om i PrestaShop-om (repozitorijumi, logger, applier)
 │   ├── Checkout/                   ← AvailablePaymentMethods (koje metode vaze za korpu), PrestaShopCartProvider
 │   ├── Controller/Admin/           ← Symfony kontroleri admin stranica
-│   ├── Entity/                     ← PaymentMethodEntity: demo metoda kao Core entitet u ps_plugin0_entity
+│   ├── Entity/                     ← PaymentMethodEntity (demo metoda) i PaymentOperationEntity (log capture/refund/cancel) u ps_plugin0_entity
 │   ├── Form/                       ← PaymentMethodForm: pravila forme iz demo Form Request-a
 │   └── Infrastructure/             ← implementacije Core interfejsa + Installer + BaseRepository + LogReader
-├── tests/                          ← demo unit testovi i in-memory repozitorijumi (Tests\ → tests/)
+├── tests/                          ← demo unit testovi i in-memory repozitorijumi (Tests\ → tests/); tests/Unit/Order su plugin0 testovi (14.8)
 ├── views/
 │   ├── templates/admin/*.html.twig ← sabloni admin stranica
 │   ├── templates/front/return.tpl  ← "placanje se obradjuje" (front controller "return")
@@ -1235,6 +1236,88 @@ dobija iznos koji je Worldline naplatio.
 - kad je korpa vec narucena (npr. izmenjen RETURNMAC za vec placenu korpu), poruka "The payment could not be
   confirmed..." se ne vidi: `/en/order` prazne korpe odmah preusmerava na `/en/cart?action=show` (2026-10-15);
   narudzbina i statusi pritom ostaju netaknuti.
+
+### 14.8 Panel za placanje na admin stranici narudzbine: capture, refund, cancel
+
+Tiket "Merchant panel on the order page". Hook `displayAdminOrderMain` (PrestaShop sablon
+`src/PrestaShopBundle/Resources/views/Admin/Sell/Order/Order/view.html.twig`, izmedju bloka Details i bloka Payment)
+prikazuje karticu "Worldline payment" za narudzbine ciji je `Order::module` = plugin0.
+
+**Ko sta radi:**
+
+1. `Plugin0::hookDisplayAdminOrderMain` → `Order\PaymentManager::panel($order, true)`:
+   - `CheckoutAPI::get()->payment($storeId)->getPaymentTransaction($cartId)`: poslednja Core transakcija korpe
+     (merchantReference = ID korpe);
+   - `CheckoutAPI::get()->payment($storeId)->updateOrderStatus($paymentId)`: Core procita placanje od Worldline-a
+     (`GET /payments/{id}/details`) i kroz `Infrastructure\ShopOrderService` dovede status narudzbine u red sa njim
+     (bez webhook-a niko drugi to ne bi uradio, npr. posle CAPTURE_REQUESTED → CAPTURED);
+   - `OrderAPI::get()->orders($storeId)->getDetails($cartId)`: jos jedan `GET /payments/{id}/details`; Core
+     `OrderService` iz njega racuna za svaku akciju `possible`, `done`, `pending`, `available` (`OrderDetails`,
+     `OrderAction`; formule u docs/CORE.md 5.5);
+   - `Order\OperationLog::forOrder`: redovi tipa `PaymentOperation` iz `ps_plugin0_entity`, najnoviji prvi;
+   - Twig `views/templates/admin/order_payment_panel.html.twig` preko Symfony `twig` servisa; forme vidi samo
+     zaposleni sa pravom Edit na Orders (`security.authorization_checker`, `PageVoter::UPDATE`, `AdminOrders`).
+2. Forma (capture, refund ili cancel, polje `amount` kao tekst) salje POST na `plugin0_order_capture|refund|cancel`
+   (`/worldline/orders/{orderId}/...`, `config/routes.yml`, `_legacy_controller: AdminOrders`) →
+   `Controller\Admin\OrderPaymentController` (`@AdminSecurity("is_granted('update', ...)")`, 403 bez prava) →
+   `PaymentManager::execute`:
+   - `MinorUnits::parse`: tekst "12.34" → Core `Amount` kao ceo broj u najmanjim jedinicama (1234), bez float-a;
+     prihvata samo pozitivan broj sa najvise onoliko decimala koliko valuta ima (`Currency::getMinorUnits`);
+   - `getDetails` (svezo stanje), pa `OperationValidator::validate`: iznos > 0; capture ≤ `capture.available`;
+     refund ≤ `refund.available`; cancel samo ako nista nije naplaceno ni zatrazeno za naplatu, i ≤ `cancel.available`;
+     odbijanje = red u logu sa ishodom `rejected`, poruka trgovcu, **nijedan POST Worldline-u** (GET za stanje jeste
+     poslat);
+   - `OrderAPI::get()->capture|refund|cancel($storeId)->handle(new CaptureRequest|RefundRequest|CancelRequest($paymentId, $amount))`:
+     Core samo prosledi SDK-u (`POST /payments/{id}/capture|refund|cancel`), bez provere i bez promene narudzbine;
+     greska = ishod `refused` u logu, narudzbina se ne dira;
+   - uspeh = ishod `success` (Worldline status CAPTURED / REFUNDED / CANCELLED) ili `pending` (npr. CAPTURE_REQUESTED,
+     REFUND_REQUESTED), pa `updateOrderStatus($paymentId)`: **jedini put do statusa narudzbine**, isti kao na
+     povratku kupca (14.7); panel ne tumaci status i ne pise ga.
+3. Nazad na stranicu narudzbine (`admin_orders_view`) sa flash porukom; panel ponovo osvezi stanje.
+
+**Log operacija:** `Entity\PaymentOperationEntity` (tip `PaymentOperation`, indeksi `orderId` i `createdAt`):
+orderId, paymentId, action, amount (najmanje jedinice) + currency, outcome (`rejected`, `refused`, `pending`,
+`success`), message, providerStatus, employeeId, createdAt. Svaki pokusaj ostavlja red, i onaj koji nije prosao
+validaciju; isti dogadjaj ide i u `ps_log` (komponenta PaymentManager).
+
+**Payment action (Settings stranica):** Core bez sacuvanih `PaymentSettings` podrazumeva SALE
+(`GeneralSettingsService::getPaymentSettings`): Worldline naplati odmah, placanje dobija status 9, pa capture i cancel
+nisu moguci (samo refund). Polje "Payment action" (`Infrastructure\PaymentActionSetting`, cuva kroz
+`AdminAPI::get()->generalSettings($storeId)->savePaymentSettings(...)` sa ostalim poljima prepisanim iz trenutnih)
+bira FINAL_AUTHORIZATION: nova placanja ostaju u statusu 5 (authorized), narudzbina dobija status iz
+`paymentAuthorizedStatus` (podrazumevano `PS_OS_BANKWIRE`, "Awaiting bank wire payment", vidi `StoreService`), a
+trgovac naplacuje ili otkazuje sa stranice narudzbine. Vazi za nova placanja; Restore defaults vraca SALE.
+
+**Sta status narudzbine radi posle operacije** (Core `StatusMappingService` + `StoreService` mapiranje, ne plugin):
+capture ceo → 9 → `PS_OS_PAYMENT`; cancel → 6 → `PS_OS_CANCELED`; refund ceo → `PS_OS_REFUND`; delimican refund →
+mapiranje `''` → narudzbina se ne menja; delimican capture → status koji Worldline vrati (5 ili 9; nije provereno).
+
+**Provereno 2026-10-15 skriptom u kontejneru** (narudzbina 9, placanje `10300539697_0`, status 9, 4,44 EUR vec
+vraceno iz Merchant Portala): panel daje total 22.94, captured 22.94, refunded 4.44, refund available 18.50, capture
+i cancel nisu moguci; refund 18.51 → "Refund of 18.51 EUR exceeds the refundable amount of 18.50 EUR."; "abc", "0",
+"-5", "1.005" → "Enter a positive amount..."; cancel → "The payment cannot be cancelled: 22.94 EUR is already
+captured..."; capture → "Capture is not possible..."; svaki pokusaj u logu sa ishodom `rejected`, `current_state`
+narudzbine ostao 2; probni redovi loga su posle obrisani. Unit testovi: `tests/Unit/Order` (32 testa).
+
+**Hook greske se ne vide same od sebe:** `Hook::coreCallHook` (`classes/Hook.php`) van debug rezima hvata svaki
+`Exception` i vraca `''`, pa kartica samo nestane. Tako je 2026-10-15 prva verzija sablona (Twig petlja
+`for a, b, c, d in` koja dodeli samo indeks i ceo niz) pala na `path('plugin0_order_0')` bez traga.
+`hookDisplayAdminOrderMain` zato gresku upisuje u log (ERROR, komponenta PaymentManager) i prikazuje crvenu poruku.
+Posle izmene sablona: `bin/console cache:clear --no-warmup --env=prod` (Twig kes). Render provereno skriptom sa
+podignutim prod kernel-om i SuperAdmin tokenom: kartica za narudzbinu 9 sa tri forme i `_token` u adresi.
+
+**FINAL_AUTHORIZATION ne daje autorizaciju (2026-10-15, otvoreno):** posle cuvanja "Authorize only" (Settings,
+14:37:52) tri placanja Visa karticom kroz Hosted Checkout (korpe 13, 14, 15; narudzbine 12, 13, 14) su ipak naplacena
+odmah: Worldline status 9, u Merchant Portal-u History "Direct sale (payment)". Core debug log (Core `LogSettings`
+debugMode ukljucen u dev prodavnici; `MonitoringLog` redovi u `ps_plugin0_entity`) pokazuje da je u `POST
+/v2/logeecom35/hostedcheckouts` za korpu 15 poslato `cardPaymentMethodSpecificInput.authorizationMode =
+"FINAL_AUTHORIZATION"` i `paymentProductId = "1"`. Plugin i Core dakle traze samo autorizaciju; zasto Worldline radi
+direct sale nije utvrdjeno. Placanja kolege na istom nalogu (`WC-...`, Visa) jesu u statusu 5 (PENDING_CAPTURE), ali
+bez 3-D Secure; kojim API-jem i sa kojim `authorizationMode` ih pravi nije poznato.
+
+**Nije provereno:** panel u browseru (403 za profil bez prava), stvarni capture/cancel
+(traze placanje sa FINAL_AUTHORIZATION), Worldline status posle delimicnog capture-a, da li sandbox refund prolazi
+odmah (REFUNDED) ili ostaje REFUND_REQUESTED.
 
 ---
 

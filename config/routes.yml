@@ -62,3 +62,30 @@ plugin0_logs:
   defaults:
     _controller: 'Plugin0\Controller\Admin\LogsController::indexAction'
     _legacy_controller: 'AdminPlugin0Configuration'
+# Panel za plaćanje na admin stranici narudžbine (hook displayAdminOrderMain): capture, refund i cancel.
+# _legacy_controller je AdminOrders, pa @AdminSecurity u kontroleru traži pravo Edit na Orders, isto kao
+# PrestaShop-ove akcije na narudžbini.
+plugin0_order_capture:
+  path: /worldline/orders/{orderId}/capture
+  methods: [POST]
+  requirements:
+    orderId: '[1-9][0-9]{0,17}'
+  defaults:
+    _controller: 'Plugin0\Controller\Admin\OrderPaymentController::captureAction'
+    _legacy_controller: 'AdminOrders'
+plugin0_order_refund:
+  path: /worldline/orders/{orderId}/refund
+  methods: [POST]
+  requirements:
+    orderId: '[1-9][0-9]{0,17}'
+  defaults:
+    _controller: 'Plugin0\Controller\Admin\OrderPaymentController::refundAction'
+    _legacy_controller: 'AdminOrders'
+plugin0_order_cancel:
+  path: /worldline/orders/{orderId}/cancel
+  methods: [POST]
+  requirements:
+    orderId: '[1-9][0-9]{0,17}'
+  defaults:
+    _controller: 'Plugin0\Controller\Admin\OrderPaymentController::cancelAction'
+    _legacy_controller: 'AdminOrders'

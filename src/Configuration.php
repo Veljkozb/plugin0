@@ -24,6 +24,12 @@ class Configuration extends CoreConfiguration
     /** Ključ podešavanja "Default currency" sa Settings stranice (ISO 4217 kod); postoji samo u plugin0. */
     public const KEY_DEFAULT_CURRENCY = 'defaultCurrency';
 
+    /**
+     * Način rezervacije za kartična plaćanja kad je Payment action "Authorize only": FINAL_AUTHORIZATION (pun capture,
+     * 7 dana) ili PRE_AUTHORIZATION (delimični capture i cancel, 30 dana). Čita ga Infrastructure\HostedCheckoutProxy.
+     */
+    public const KEY_CARD_AUTHORIZATION_MODE = 'cardAuthorizationMode';
+
     protected static ?Singleton $instance = null;
 
     public function getIntegrationName(): string

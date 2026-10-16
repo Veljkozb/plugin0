@@ -4,8 +4,11 @@
   kad se nešto promenilo; Restore traži potvrdu pre slanja, rečima demo RestoreDialog-a. Default currency nudi
   valute koje je prodavnica uključila; dok nijedna nije izabrana (demo: null), select počinje sa "Choose a currency".
 
-  Kontroler šalje: form (log_level, default_currency, rows_per_page), errors (poruka po polju), levels (value, label,
-  effect), currencies (kod => naziv), min_rows, max_rows.
+  Četvrto polje, Payment action, nije iz dema: Core podešavanje da li Worldline naplati odmah (SALE) ili samo
+  rezerviše iznos (FINAL_AUTHORIZATION), pa se capture ili cancel radi sa stranice narudžbine.
+
+  Kontroler šalje: form (log_level, default_currency, rows_per_page, payment_action), errors (poruka po polju),
+  levels (value, label, effect), currencies (kod => naziv), min_rows, max_rows, payment_actions (vrednost => tekst).
 #}
 {% extends '@Modules/plugin0/views/templates/admin/layout.html.twig' %}
 
@@ -64,6 +67,19 @@
                         {% endif %}
                         <small class="form-text text-muted">A whole number from {{ min_rows }} to {{ max_rows }}. The Payment methods and Logs lists show this many rows per page.</small>
                     </div>
+
+                    <div class="form-group">
+                        <label for="payment_action">Payment action</label>
+                        <select class="form-control{{ errors.payment_action is defined ? ' is-invalid' }}" id="payment_action" name="payment_action">
+                            {% for value, label in payment_actions %}
+                            <option value="{{ value }}" {{ form.payment_action == value ? 'selected' }}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        {% if errors.payment_action is defined %}
+                        <div class="invalid-feedback">{{ errors.payment_action }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">Applies to new payments. With "Authorize only" the order page offers capture and cancel; a charged payment can only be refunded. Final authorization must be captured in full within 7 days; pre-authorization allows partial captures and cancellations within 30 days.</small>
+                    </div>
                 </div>
 
                 <div class="card-footer d-flex justify-content-between">
@@ -91,8 +107,9 @@
         var effect = document.getElementById('plugin0_log_level_effect');
         var currency = document.getElementById('default_currency');
         var rows = document.getElementById('rows_per_page');
+        var paymentAction = document.getElementById('payment_action');
         var saveButton = document.getElementById('plugin0_save_button');
-        var initial = { level: select.value, currency: currency ? currency.value : '', rows: rows.value };
+        var initial = { level: select.value, currency: currency ? currency.value : '', rows: rows.value, paymentAction: paymentAction.value };
 
         function showEffect() {
             var option = select.options[select.selectedIndex];
@@ -103,7 +120,8 @@
         function showDirty() {
             saveButton.disabled = select.value === initial.level
                 && (currency ? currency.value : '') === initial.currency
-                && rows.value === initial.rows;
+                && rows.value === initial.rows
+                && paymentAction.value === initial.paymentAction;
         }
 
         select.addEventListener('change', function () {
@@ -114,6 +132,7 @@
             currency.addEventListener('change', showDirty);
         }
         rows.addEventListener('input', showDirty);
+        paymentAction.addEventListener('change', showDirty);
         // Browser posle osvežavanja može da vrati stari izbor u polja; uskladi prikaz sa njim.
         showEffect();
         showDirty();
@@ -121,7 +140,7 @@
         // Potvrda pre Restore defaults, rečima demo RestoreDialog-a.
         document.getElementById('plugin0_restore_form').addEventListener('submit', function (event) {
             var question = 'Restore every setting to its default?\n\n'
-                + 'The log level, the default currency and the rows per page all go back to their defaults, '
+                + 'The log level, the default currency, the rows per page and the payment action all go back to their defaults, '
                 + 'and what is saved now is lost.';
             if (!window.confirm(question)) {
                 event.preventDefault();

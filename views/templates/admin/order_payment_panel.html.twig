@@ -1,0 +1,160 @@
+{#
+  Panel "Worldline payment" na admin stranici narudžbine (hook displayAdminOrderMain, između bloka Details i
+  bloka Payment), za narudžbine plaćene kroz plugin0. Kartica u stilu PrestaShop-ovih blokova te stranice.
+
+  Sadržaj: stanje plaćanja kod Worldline-a (ukupan iznos, naplaćeno, vraćeno, otkazano i koliko je još dostupno
+  za svaku akciju), tri forme (capture, refund, cancel) i log svih pokušaja, najnoviji prvi.
+
+  Dugmad su isključena kad akcija nije moguća, ali to je samo udobnost: ista pravila proverava server
+  (OperationValidator) pre nego što išta ode Worldline-u. Forme šalju POST na adrese sa PrestaShop _token-om
+  (path()), a kontroler traži pravo Edit na Orders.
+
+  plugin0.php šalje: order_id, can_act (zaposleni sme da menja narudžbine), panel (PaymentManager::panel):
+  payment_id, payment_method, status_code, status_warning, details_error, state (currency, total, capture,
+  refund, cancel sa possible/done/pending/available/available_value i cancel.blocked, errors) ili null, log (redovi
+  sa time, action, amount, outcome, message, provider_status, employee_id).
+#}
+{% set state = panel.state %}
+<div class="card mt-2" id="plugin0_order_payment_block">
+  <div class="card-header">
+    <h3 class="card-header-title">Worldline payment</h3>
+  </div>
+
+  <div class="card-body">
+    <p class="mb-2">
+      Payment ID <code>{{ panel.payment_id }}</code>
+      {% if panel.payment_method %}· {{ panel.payment_method }}{% endif %}
+      · Worldline status code {{ panel.status_code }}
+    </p>
+
+    {% if panel.status_warning %}
+      <div class="alert alert-warning">{{ panel.status_warning }}</div>
+    {% endif %}
+
+    {% if state is null %}
+      <div class="alert alert-danger">The payment state could not be read from Worldline. {{ panel.details_error }}</div>
+    {% else %}
+      {% if state.errors is not empty %}
+        <div class="alert alert-warning">Worldline reports: {{ state.errors|join(', ') }}</div>
+      {% endif %}
+
+      <table class="table table-sm mb-3">
+        <thead>
+          <tr>
+            <th></th>
+            <th class="text-right">Done</th>
+            <th class="text-right">Requested, in progress</th>
+            <th class="text-right">Still available</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Authorised (order total at Worldline)</td>
+            <td class="text-right" colspan="3"><strong>{{ state.total }} {{ state.currency }}</strong></td>
+          </tr>
+          <tr>
+            <td>Captured</td>
+            <td class="text-right">{{ state.capture.done }}</td>
+            <td class="text-right">{{ state.capture.pending }}</td>
+            <td class="text-right">{{ state.capture.available }}</td>
+          </tr>
+          <tr>
+            <td>Refunded</td>
+            <td class="text-right">{{ state.refund.done }}</td>
+            <td class="text-right">{{ state.refund.pending }}</td>
+            <td class="text-right">{{ state.refund.available }}</td>
+          </tr>
+          <tr>
+            <td>Cancelled</td>
+            <td class="text-right">{{ state.cancel.done }}</td>
+            <td class="text-right">{{ state.cancel.pending }}</td>
+            <td class="text-right">{{ state.cancel.blocked ? '0.00 (payment already captured)' : state.cancel.available }}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {% if can_act %}
+        {#
+          Twig petlja zna samo "for kljuc, vrednost in": svaka forma je zato jedan hash, a ne niz od četiri
+          vrednosti (sa "for a, b, c, d in" Twig dodeli a = indeks, b = ceo niz, a c i d ignoriše).
+        #}
+        {% set forms = [
+          {action: 'capture', label: 'Capture', possible: state.capture.possible, available: state.capture.available},
+          {action: 'refund', label: 'Refund', possible: state.refund.possible, available: state.refund.available},
+          {action: 'cancel', label: 'Cancel', possible: state.cancel.possible and not state.cancel.blocked, available: state.cancel.available}
+        ] %}
+        <div class="row">
+          {% for form in forms %}
+            {% set action = form.action %}
+            {% set label = form.label %}
+            {% set possible = form.possible %}
+            {% set available = form.available %}
+            <div class="col-md-4">
+              <form method="post" action="{{ path('plugin0_order_' ~ action, {'orderId': order_id}) }}" class="mb-2">
+                <label for="plugin0_{{ action }}_amount">{{ label }} amount ({{ state.currency }})</label>
+                <div class="input-group">
+                  <input type="text" class="form-control" id="plugin0_{{ action }}_amount" name="amount"
+                         inputmode="decimal" value="{{ possible ? available : '' }}" {{ possible ? '' : 'disabled' }}>
+                  <div class="input-group-append">
+                    <button type="submit" class="btn btn-{{ action == 'cancel' ? 'outline-danger' : 'primary' }}" {{ possible ? '' : 'disabled' }}
+                            data-confirm="{{ label }} this amount at Worldline?">{{ label }}</button>
+                  </div>
+                </div>
+                {% if not possible %}
+                  <small class="form-text text-muted">Not possible in the current payment state.</small>
+                {% endif %}
+              </form>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="text-muted">Your profile cannot edit orders, so payment operations are not available.</p>
+      {% endif %}
+    {% endif %}
+
+    <h4 class="mt-3">Operation log</h4>
+    {% if panel.log is empty %}
+      <p class="text-muted mb-0">No capture, refund or cancel has been attempted from this page.</p>
+    {% else %}
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Action</th>
+            <th class="text-right">Amount</th>
+            <th>Outcome</th>
+            <th>Details</th>
+            <th>Employee</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in panel.log %}
+            <tr>
+              <td class="text-nowrap">{{ row.time }}</td>
+              <td>{{ row.action }}</td>
+              <td class="text-right text-nowrap">{{ row.amount }}</td>
+              <td>
+                {% set badge = {'success': 'success', 'pending': 'info', 'refused': 'danger', 'rejected': 'warning'} %}
+                <span class="badge badge-{{ badge[row.outcome]|default('secondary') }}">{{ row.outcome }}</span>
+              </td>
+              <td>{{ row.message }}{% if row.provider_status %} <small class="text-muted">({{ row.provider_status }}{% if row.provider_operation_id %} · {{ row.provider_operation_id }}{% endif %})</small>{% endif %}</td>
+              <td>#{{ row.employee_id }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  // Potvrda pre slanja; pravila i poruke su na serveru.
+  document.querySelectorAll('#plugin0_order_payment_block form').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      var button = form.querySelector('button[type=submit]');
+      if (button && !window.confirm(button.getAttribute('data-confirm'))) {
+        event.preventDefault();
+      }
+    });
+  });
+</script>

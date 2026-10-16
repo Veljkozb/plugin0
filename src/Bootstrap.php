@@ -5,6 +5,7 @@ namespace Plugin0;
 use Plugin0\Infrastructure\Repository\BaseRepository;
 use Plugin0\Infrastructure\Repository\LogsRepository;
 use Plugin0\Entity\PaymentMethodEntity;
+use Plugin0\Entity\PaymentOperationEntity;
 use WOP\OnlinePayments\Core\Bootstrap\BootstrapComponent;
 use WOP\OnlinePayments\Core\Bootstrap\Configuration\Configuration as CoreConfiguration;
 use WOP\OnlinePayments\Core\Bootstrap\DataAccess\Connection\ConnectionConfigEntity;
@@ -43,6 +44,14 @@ use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\Language\LanguageSe
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\Logo\LogoUrlService as LogoUrlServiceInterface;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\Payment\ShopPaymentService as ShopPaymentServiceInterface;
 use Plugin0\Infrastructure\ShopOrderService;
+use Plugin0\Infrastructure\HostedCheckoutProxy;
+use Plugin0\Infrastructure\PaymentActionSetting;
+use Plugin0\Infrastructure\PaymentsProxy;
+use WOP\OnlinePayments\Core\Bootstrap\ApiFacades\PaymentProcessor\Proxies\PaymentsProxy as CorePaymentsProxy;
+use WOP\OnlinePayments\Core\BusinessLogic\PaymentProcessor\Proxies\PaymentsProxyInterface;
+use WOP\OnlinePayments\Core\Bootstrap\SingleInstance;
+use WOP\OnlinePayments\Core\Bootstrap\Sdk\MerchantClientFactory;
+use WOP\OnlinePayments\Core\BusinessLogic\PaymentProcessor\Proxies\HostedCheckoutProxyInterface;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\ShopOrderService as ShopOrderServiceInterface;
 
 class Bootstrap extends BootstrapComponent
@@ -117,6 +126,34 @@ class Bootstrap extends BootstrapComponent
     }
 
     /**
+     * Zamena Core HostedCheckoutProxy-ja. Mora u initProxies, ne u initServices: BootstrapComponent::init zove
+     * parent::init (initServices) pa tek onda initProxies, gde Core registruje svoj proxy pod istim ključem; ponovna
+     * registracija posle parent::initProxies zamenjuje Core implementaciju (ServiceRegister, poslednja važi).
+     * Za kartične brendove usklađuje mobile/redirect deo zahteva sa kartičnim authorizationMode-om, inače Worldline
+     * plaćanje obradi kao direct sale. Vidi Infrastructure\HostedCheckoutProxy.
+     */
+    protected static function initProxies(): void
+    {
+        parent::initProxies();
+
+        ServiceRegister::registerService(HostedCheckoutProxyInterface::class, new SingleInstance(static function () {
+            return new HostedCheckoutProxy(
+                ServiceRegister::getService(MerchantClientFactory::class),
+                static function (): string {
+                    return PaymentActionSetting::cardAuthorizationMode();
+                }
+            );
+        }));
+
+        // Omotač oko Core PaymentsProxy-ja: posle delimičnih naplata Worldline prvobitnu rezervaciju drži u statusu 5,
+        // a Core status i "refund moguć" čita samo sa nje; omotač zatvorenu rezervaciju tumači kao naplaćeno
+        // (ili vraćeno). Vidi Infrastructure\PaymentsProxy.
+        ServiceRegister::registerService(PaymentsProxyInterface::class, new SingleInstance(static function () {
+            return new PaymentsProxy(new CorePaymentsProxy(ServiceRegister::getService(MerchantClientFactory::class)));
+        }));
+    }
+
+    /**
      * Svaki core entitet dobija klasu koja ga čita i piše u PrestaShop bazi.
      * QueueItem namerno nije ovde: on traži QueueItemRepository (posebne metode za red zadataka)
      * i dolazi u koraku za webhook-e i pozadinske zadatke.
@@ -141,8 +178,10 @@ class Bootstrap extends BootstrapComponent
             PaymentTransactionLockEntity::class,
             ProductTypeEntity::class,
             TokenEntity::class,
-            // Jedini entitet koji nije Core-ov: metoda plaćanja iz demo projekta, vidi Entity\PaymentMethodEntity.
+            // Entiteti koji nisu Core-ovi: metoda plaćanja iz demo projekta (Entity\PaymentMethodEntity) i log
+            // capture/refund/cancel pokušaja sa admin stranice narudžbine (Entity\PaymentOperationEntity).
             PaymentMethodEntity::class,
+            PaymentOperationEntity::class,
         ];
 
         foreach ($entities as $entityClass) {

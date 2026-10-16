@@ -45,7 +45,8 @@ class Plugin0 extends PaymentModule
         return parent::install()
             && \Plugin0\Infrastructure\Installer::createTables()
             && $this->registerHook('actionDispatcherBefore')
-            && $this->registerHook('paymentOptions');
+            && $this->registerHook('paymentOptions')
+            && $this->registerHook('displayAdminOrderMain');
     }
 
     public function uninstall()
@@ -107,6 +108,61 @@ class Plugin0 extends PaymentModule
         }
 
         return $options;
+    }
+
+    /**
+     * Panel "Worldline payment" na admin stranici narudžbine (Sell > Orders > narudžbina): PrestaShop-ov Symfony
+     * šablon Admin/Sell/Order/Order/view.html.twig zove hook displayAdminOrderMain sa $params['id_order'] između
+     * bloka Details i bloka Payment. Samo za narudžbine koje je napravio ovaj modul (Order::module).
+     *
+     * Pri svakom otvaranju panel prvo osveži status narudžbine od Worldline-a (PaymentManager::panel sa true), pa
+     * prikaže stanje plaćanja, forme za capture / refund / cancel i log pokušaja. Forme vidi samo zaposleni čiji
+     * profil sme da menja narudžbine (pravo "update" na AdminOrders, isto koje traži i kontroler akcija).
+     *
+     * @param array{id_order: int|string} $params
+     */
+    public function hookDisplayAdminOrderMain(array $params): string
+    {
+        $order = new Order((int) ($params['id_order'] ?? 0));
+        if (!Validate::isLoadedObject($order) || $order->module !== $this->name) {
+            return '';
+        }
+
+        \Plugin0\Bootstrap::boot();
+
+        // Hook::coreCallHook van debug režima guta svaki Exception i vraća '' (kartica tada samo nestane), pa se
+        // greška ovde upisuje u log (Worldline > Logs) i trgovac vidi da panel nije mogao da se učita.
+        try {
+            $panel = (new \Plugin0\Order\PaymentManager((string) $this->context->shop->id))->panel($order, true);
+            if ($panel === null) {
+                return '';
+            }
+
+            $container = \PrestaShop\PrestaShop\Adapter\SymfonyContainer::getInstance();
+
+            return $container->get('twig')->render('@Modules/plugin0/views/templates/admin/order_payment_panel.html.twig', [
+                'order_id' => (int) $order->id,
+                'can_act' => $container->get('security.authorization_checker')->isGranted(
+                    \PrestaShopBundle\Security\Voter\PageVoter::UPDATE,
+                    'AdminOrders'
+                ),
+                'panel' => $panel,
+            ]);
+        } catch (\Throwable $e) {
+            \WOP\OnlinePayments\Core\Infrastructure\Logger\Logger::logError(
+                'Worldline payment panel could not be rendered on the order page',
+                'PaymentManager',
+                \Plugin0\Infrastructure\LoggerService::context([
+                    'orderId' => (int) $order->id,
+                    'error' => get_class($e) . ': ' . $e->getMessage(),
+                    'at' => $e->getFile() . ':' . $e->getLine(),
+                ])
+            );
+
+            return '<div class="card mt-2"><div class="card-body"><div class="alert alert-danger mb-0">'
+                . 'The Worldline payment panel could not be loaded. Details are in Worldline &gt; Logs.'
+                . '</div></div></div>';
+        }
     }
 
     /**

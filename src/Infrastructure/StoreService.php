@@ -47,6 +47,11 @@ class StoreService implements StoreServiceInterface
     /**
      * Podrazumevano mapiranje Worldline stanja na PrestaShop statuse narudžbine (ID-jevi iz ps_configuration).
      * Redosled argumenata: captured, error, pending, authorized, cancelled, refunded, partially refunded.
+     *
+     * "Partially refunded" namerno ide na isti status kao "captured": PrestaShop nema status za delimičan povraćaj,
+     * a Core (StatusMappingService::getFullStatusMapping) čim je nešto vraćeno, a manje od naplaćenog, uzima baš ovaj
+     * status; kad je prazan, StatusUpdateService ne menja narudžbinu uopšte, pa bi narudžbina sa delimičnim refundom
+     * ostala u statusu u kom je zatečena (npr. "autorizovano"). Delimično vraćena narudžbina je i dalje plaćena.
      */
     public function getDefaultOrderStatusMapping(): OrderStatusMapping
     {
@@ -57,7 +62,7 @@ class StoreService implements StoreServiceInterface
             (string) Configuration::get('PS_OS_BANKWIRE'),
             (string) Configuration::get('PS_OS_CANCELED'),
             (string) Configuration::get('PS_OS_REFUND'),
-            ''
+            (string) Configuration::get('PS_OS_PAYMENT')
         );
     }
 

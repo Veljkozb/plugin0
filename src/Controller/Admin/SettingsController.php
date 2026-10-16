@@ -7,6 +7,7 @@ use Logeecom\Settings\Domain\LogLevel;
 use Logeecom\Settings\Domain\Settings;
 use Logeecom\Settings\Service\SettingsService;
 use Plugin0\Bootstrap;
+use Plugin0\Infrastructure\PaymentActionSetting;
 use Plugin0\Infrastructure\ShopCountriesAndCurrencies;
 use Plugin0\Services;
 use Symfony\Component\HttpFoundation\Request;
@@ -22,6 +23,10 @@ use Throwable;
  *
  * Pravila (defaulti, granice, šta se loguje) su u demo SettingsService-u; kontroler samo čita zahtev i prevodi
  * odgovor. Kao u demu, stranica postoji samo dok je prodavnica povezana; inače vodi na Configuration.
+ *
+ * Četvrto polje, Payment action, nije iz dema: to su Core-ova PaymentSettings aktivne konekcije
+ * (Infrastructure\PaymentActionSetting), potrebna da bi plaćanje ostalo samo autorizovano, pa se naplatilo ili
+ * otkazalo sa stranice narudžbine. Čuva se posle demo podešavanja i vraća na Core default (SALE) uz Restore.
  */
 class SettingsController extends ConnectedController
 {
@@ -44,6 +49,7 @@ class SettingsController extends ConnectedController
         if ($request->request->get('action') === 'restore') {
             try {
                 $service->restoreDefaults($this->employeeId());
+                PaymentActionSetting::save($this->storeId(), PaymentActionSetting::SALE);
                 $this->addFlash('success', 'Every setting is back at its default.');
             } catch (Throwable $e) {
                 $this->addFlash('error', 'Settings could not be restored. ' . $e->getMessage());
@@ -56,6 +62,7 @@ class SettingsController extends ConnectedController
             'log_level' => trim(self::scalar($request->request->get('log_level'))),
             'default_currency' => trim(self::scalar($request->request->get('default_currency'))),
             'rows_per_page' => trim(self::scalar($request->request->get('rows_per_page'))),
+            'payment_action' => trim(self::scalar($request->request->get('payment_action'))),
         ];
         $errors = $this->validate($service, $submitted);
         if ($errors !== []) {
@@ -71,6 +78,7 @@ class SettingsController extends ConnectedController
                 ),
                 $this->employeeId()
             );
+            PaymentActionSetting::save($this->storeId(), $submitted['payment_action']);
             $this->addFlash('success', 'Settings saved.');
         } catch (InvalidArgumentException $e) {
             // Servis je odbio valutu (katalog se promenio između prikaza i čuvanja): poruka ispod polja, ništa nije upisano.
@@ -86,7 +94,7 @@ class SettingsController extends ConnectedController
      * Pravila demo UpdateSettingsRequest-a: sva tri polja obavezna, valuta iz kataloga, redovi ceo broj u granicama,
      * nivo jedan od četiri.
      *
-     * @param array{log_level: string, default_currency: string, rows_per_page: string} $submitted
+     * @param array{log_level: string, default_currency: string, rows_per_page: string, payment_action: string} $submitted
      *
      * @return array<string, string> poruka po polju; prazno kad je sve ispravno
      */
@@ -117,11 +125,15 @@ class SettingsController extends ConnectedController
             $errors['log_level'] = 'The log level must be Debug, Info, Warning or Error.';
         }
 
+        if (!PaymentActionSetting::isValid($submitted['payment_action'])) {
+            $errors['payment_action'] = 'The payment action must be SALE, FINAL_AUTHORIZATION or PRE_AUTHORIZATION.';
+        }
+
         return $errors;
     }
 
     /**
-     * @param array{log_level: string, default_currency: string, rows_per_page: string|int} $form vrednosti polja
+     * @param array{log_level: string, default_currency: string, rows_per_page: string|int, payment_action: string} $form vrednosti polja
      * @param array<string, string> $errors poruka po polju
      */
     private function renderForm(SettingsService $service, array $form, array $errors): Response
@@ -141,18 +153,27 @@ class SettingsController extends ConnectedController
             'currencies' => $currencies,
             'min_rows' => Settings::MIN_ROWS_PER_PAGE,
             'max_rows' => Settings::MAX_ROWS_PER_PAGE,
+            'payment_actions' => PaymentActionSetting::CHOICES,
         ]);
     }
 
     /**
-     * @return array{log_level: string, default_currency: string, rows_per_page: int}
+     * @return array{log_level: string, default_currency: string, rows_per_page: int, payment_action: string}
      */
     private function values(Settings $settings): array
     {
+        try {
+            $paymentAction = PaymentActionSetting::current($this->storeId());
+        } catch (Throwable $e) {
+            $this->addFlash('error', 'The payment action could not be read from Core. ' . $e->getMessage());
+            $paymentAction = PaymentActionSetting::SALE;
+        }
+
         return [
             'log_level' => $settings->logLevel->value,
             'default_currency' => $settings->defaultCurrency ?? '',
             'rows_per_page' => $settings->rowsPerPage,
+            'payment_action' => $paymentAction,
         ];
     }
 
