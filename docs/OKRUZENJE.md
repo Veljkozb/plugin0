@@ -8,6 +8,11 @@ posebno, u [CORE.md](CORE.md). Ovde se pominje samo onoliko koliko treba da se v
 oznaceno je kao **neprovereno**. Podrazumevane vrednosti alata oznacene su kao **default**. Poredjenja koja sluze
 samo za lakse razumevanje oznacena su kao **poredjenje**.
 
+**Uskladjeno 2026-10-16** sa kodom grane `feature/MIDU-1224` (commit `06a7b91`), kontejnerom i bazom: composer
+(poglavlja 1, 4.1, 8.3, 17, 19), stanje baze (10.4), adrese admin ruta i hook (13.1), front controller-i (13.2),
+plugin iznutra (14), logovi (16) i spisak neproverenog (20). Ceo plugin, fajl po fajl, objasnjen je u
+[VODIC.md](VODIC.md).
+
 ---
 
 ## Sadrzaj
@@ -47,7 +52,7 @@ Windows
 │   ├── /home/veljkozbiljic/logeecom/    ← docker-compose.yml, Dockerfile, systems/, plugin0/
 │   ├── docker (klijent)                 ← salje zahteve Docker Engine-u
 │   ├── ngrok (agent)                    ← tunel sa interneta na localhost:80
-│   └── composer, php 8.5.4              ← samo za composer install u plugin0
+│   └── php 8.5.4 (CLI)                  ← plugin0 ga ne koristi; composer je u kontejneru (4.1)
 │
 └── WSL distribucija "docker-desktop"    ← ovde radi Docker Engine (dockerd)
     ├── image-i (logeecom-app, elasticsearch, ...)
@@ -211,26 +216,24 @@ ngrok http 80 --url=https://8-2-4.prestashop.veljko.ngrok.app
 
 Zasto je tunel obavezan objasnjeno je u poglavlju 12.
 
-**Korak 4: samo posle novog `git clone`.** Instaliraj zavisnosti, jer je `vendor/` u `.gitignore`:
+**Korak 4: samo posle novog `git clone`.** Instaliraj zavisnosti, jer je `vendor/` u `.gitignore`. Composer se
+pokrece **u kontejneru**, kao korisnik 1000 (tvoj WSL korisnik), da `vendor/` ostane u tvom vlasnistvu:
 
 ```bash
-cd /home/veljkozbiljic/logeecom/plugin0
+docker exec -u 1000:1000 -e HOME=/tmp/plugin0-home -w /var/www/html/public/prestashop/8-2-4/modules/plugin0 logeecom_dev composer install
 ```
 
-```bash
-composer install
-```
-
-Composer pokreces **u WSL-u** (`/usr/local/bin/composer`, PHP 8.5.4). U kontejneru nema composera. Komanda
-instalira pakete iz `composer.lock`:
+Stanje 2026-10-16: u WSL-u postoji PHP 8.5.4, ali **nema composer-a** (`which composer` ne nalazi nista); u
+kontejneru je `/usr/local/bin/composer` (Composer 2.2.9, deo dockware image-a), koji radi na PHP-u 8.2, istom kao
+prodavnica. Ista komanda sa `--dry-run` je 2026-10-16 javila "Nothing to install, update or remove". `-e HOME=...`
+treba jer korisnik 1000 u kontejneru nema svoj home folder. Komanda instalira pakete iz `composer.lock`:
 - `wl-online-payments-direct/plugin-core-base` 1.0.7
 - `wl-online-payments-direct/sdk-php` 6.2.0
 - `robtimus/multipart` 1.0.1
+- dev paketi za unit testove: `phpunit/phpunit` 11 i `psr/log` 1.1, sa svojim zavisnostima
 
 Pravi i `vendor/autoload.php` sa mapiranjima `Plugin0\` → `src/` i `Logeecom\` → `lib/Logeecom/` (demo kod), plus
-`Tests\` → `tests/` za unit testove. Dev paketi (`phpunit/phpunit` 11, `psr/log` 1.1) instaliraju se composer-om iz
-kontejnera (`docker exec -u 1000:1000 -w .../modules/plugin0 logeecom_dev composer install`), da `vendor/` ostane u
-vlasnistvu korisnika iz WSL-a. `composer.json` ima `"config": {"prepend-autoloader": false}` (kao Packlink modul):
+`Tests\` → `tests/` za unit testove. `composer.json` ima `"config": {"prepend-autoloader": false}` (kao Packlink modul):
 autoloader modula se registruje *posle* PrestaShop-ovog, pa klasa koju imaju oba (na primer `PhpParser\ParserFactory`,
 koju phpunit vuce u verziji 5, a PrestaShop ima verziju 4 i zove je u Module Manager-u) dolazi iz PrestaShop vendora.
 Bez toga Module Manager puca sa "undefined method create of class PhpParser\ParserFactory".
@@ -573,7 +576,10 @@ pri svakom startu.
 
 - **Memcached ne radi.** `parameters.php` ima `ps_caching => CacheMemcache`, ali i `ps_cache_enable => false`,
   pa se kes ne koristi.
-- **Composer** nije u PATH-u za `root` u kontejneru. Composer se pokrece iz WSL-a.
+- **Composer: ispravka 2026-10-16.** Ovde je ranije stajalo da composer nije u PATH-u za `root` u kontejneru i da
+  se pokrece iz WSL-a. Tacno je obrnuto: composer **jeste** u kontejneru (`/usr/local/bin/composer`, 2.2.9, iz
+  dockware image-a, datum fajla 2024-11-13) i u PATH-u (`/usr/local/bin` je u PATH-u), a u WSL-u ga nema. Komanda
+  je u 4.1.
 
 ### 8.4 Mount `/var/run/docker.sock`
 
@@ -734,22 +740,27 @@ Podesavanja servera: engine InnoDB (default), `character_set_server = utf8mb4`,
 
 | Tabela | Cija je | Sta plugin0 tu drzi |
 |---|---|---|
-| `ps_plugin0_entity` | plugin0 | svi Core entiteti: konekcija, podesavanja (`ConfigEntity`), metode placanja, transakcije, monitoring logovi |
-| `ps_log` | PrestaShop | poruke koje `LoggerService` prosledjuje iz Core-a, sa prefiksom `WORLDLINE` (trenutno 270 redova, od 2026-10-07 do 2026-10-13) |
+| `ps_plugin0_entity` | plugin0 | Core entiteti (konekcija, podesavanja kao `ConfigEntity`, Core payment i log podesavanja, transakcije, monitoring logovi) i dva entiteta plugina (metode placanja iz dema, tip `PaymentMethod`; log capture/refund/cancel pokusaja, tip `PaymentOperation`) |
+| `ps_log` | PrestaShop | poruke koje `LoggerService` prosledjuje iz Core-a i iz demo servisa, sa prefiksom `WORLDLINE` (1034 reda, od 2026-10-07 do 2026-10-16; stanje 2026-10-16) |
+| `ps_orders`, `ps_order_history`, `ps_order_payment` | PrestaShop | narudzbine (pravi ih `ShopOrderService` posle placanja), istorija statusa i uplate koje PrestaShop pri tome upise (14.7, 14.8) |
 
 Struktura `ps_plugin0_entity` (pravi je [Installer.php](../src/Infrastructure/Installer.php)):
 
 | Kolona | Tip | Cemu sluzi |
 |---|---|---|
 | `id` | INT UNSIGNED, AUTO_INCREMENT, PK | ID entiteta |
-| `type` | VARCHAR(128) | vrsta Core entiteta, na primer `ConnectionConfig` |
+| `type` | VARCHAR(128) | vrsta entiteta, na primer `ConnectionConfig` (Core) ili `PaymentMethod` (plugin) |
 | `index_1` … `index_9` | VARCHAR(255) NULL | vrednosti po kojima Core pretrazuje, na primer `storeId`. Broj kolona je `BaseRepository::INDEX_COLUMNS = 9` |
 | `data` | LONGTEXT | ceo entitet kao JSON, sa `class_name` |
 
 Indeksi: `(type, index_1)`, `(type, index_2)`, `(type, index_3)`. Collation: `utf8mb4_unicode_ci`.
 
-Trenutno je u `ps_plugin0_entity` jedan red: `id = 3`, `type = ConnectionConfig`, `index_1 = 1`. Sacuvanih
-podesavanja sa Settings stranice nema, pa vaze default-i iz `SettingsService`.
+Stanje 2026-10-16, redova po vrsti: `Configuration` 2 (`defaultCurrency = RSD`, `cardAuthorizationMode =
+PRE_AUTHORIZATION`), `ConnectionConfig` 1 (`index_1 = 1`), `LogSettings` 1 (Core debug mode ukljucen),
+`MonitoringLog` 287, `PaymentMethod` 2, `PaymentOperation` 12, `PaymentSettingsEntity` 1 (`paymentAction =
+FINAL_AUTHORIZATION`), `PaymentTransaction` 13. Log level i Rows per page nisu sacuvani, pa vaze default-i iz
+`SettingsService` (Info i 10). Sta koja vrsta znaci i koji indeks je koje polje: [VODIC.md](VODIC.md), poglavlje 9.
+(Do 2026-10-13 je ovde stajao jedan red, `ConnectionConfig`.)
 
 ### 10.5 Fajlovi u `/var/lib/mysql`
 
@@ -924,7 +935,10 @@ Put zahteva:
 
 ## 13. Put jednog zahteva do plugin0
 
-### 13.1 Admin zahtev (na primer `/worldline/settings`)
+### 13.1 Admin zahtev (na primer stranica Settings)
+
+Prava adresa: `https://8-2-4.prestashop.veljko.ngrok.app/admin174kob088ranecckhxg/index.php/modules/worldline/settings?_token=...`.
+U `config/routes.yml` putanja je `/worldline/settings`; prefiks `/modules` dodaje PrestaShop (korak 4).
 
 1. **Browser → ngrok → Apache.** Kao u poglavlju 12.4.
 2. **Apache → PHP-FPM.** Vhost salje `.php` zahtev preko `/var/run/php/php8.2-fpm.sock`. Jedan radni proces
@@ -939,20 +953,25 @@ Put zahteva:
    - `app/AppKernel.php` (linije 223–238) za svaki aktivni modul ukljucuje `modules/<modul>/vendor/autoload.php`.
      Tako PHP nalazi klase `Plugin0\...`.
    - `src/PrestaShopBundle/Routing/YamlModuleLoader.php:66` ucitava `modules/<modul>/config/routes.yml`. Tako
-     Symfony zna za rute plugin0. U prod rezimu rute su kesirane u `var/cache/prod`.
+     Symfony zna za rute plugin0. Ista klasa svakoj ruti modula doda prefiks `/modules`
+     (`$route->setPath('/modules' . $route->getPath())`, linija 108), osim kad ruta ima
+     `_disable_module_prefix: true` (plugin0 to nema). U prod rezimu rute su kesirane u `var/cache/prod`.
 5. **Hook `actionDispatcherBefore`.** Za Symfony rute ga okida
-   `PrestaShopBundle\EventListener\ActionDispatcherLegacyHooksSubscriber` (po komentaru u `plugin0.php`; u kodu
-   PrestaShop-a **neprovereno**). Redom:
+   `PrestaShopBundle\EventListener\ActionDispatcherLegacyHooksSubscriber` (konstanta `DISPATCHER_BEFORE_ACTION =
+   'actionDispatcherBefore'` na liniji 41, poziv na liniji 91; provereno u kodu 2026-10-16, ne radom). Redom:
    - Ucitava se `plugin0.php`, klasa `Plugin0`, koja `require_once` ucitava `vendor/autoload.php`.
    - Poziva se `Plugin0::hookActionDispatcherBefore()`, koji poziva `Plugin0\Bootstrap::boot()`.
-   - `boot()` poziva `BootstrapComponent::bootstrap()` iz Core-a sa `config/brand.json` i registruje servise i
-     repozitorijume (poglavlje 14.4). Jednom po PHP procesu; svaki sledeci poziv ne radi nista.
+   - `boot()` poziva `BootstrapComponent::bootstrap()` iz Core-a sa `config/brand.json` i registruje servise,
+     proxy-je i repozitorijume (poglavlje 14.4). Jednom po zahtevu: PHP posle svakog zahteva zaboravlja staticke
+     promenljive (i kad isti PHP-FPM radni proces prima sledeci zahtev), pa `Bootstrap::$booted` vazi do kraja
+     zahteva; svaki sledeci poziv u istom zahtevu ne radi nista.
 6. **Router** nalazi rutu u [config/routes.yml](../config/routes.yml), na primer `plugin0_settings` →
    `Plugin0\Controller\Admin\SettingsController::indexAction`.
 7. **Bezbednost.** PrestaShop proverava da li je zaposleni ulogovan
-   (`PrestaShop\PrestaShop\Adapter\Security\Admin::onKernelRequest`) i proverava `_token` u URL-u. Ruta
-   `api_plugin0_core_info` namerno pocinje sa `api_`, pa `TokenizedUrlsListener` preskace proveru tokena (po
-   komentaru u `routes.yml`).
+   (`PrestaShop\PrestaShop\Adapter\Security\Admin::onKernelRequest`, `src/Adapter/Security/Admin.php:90`) i
+   proverava `_token` u URL-u. Ruta `api_plugin0_core_info` namerno pocinje sa `api_`, pa `TokenizedUrlsListener`
+   preskace proveru tokena (`src/PrestaShopBundle/EventListener/TokenizedUrlsListener.php:91`, provereno u kodu
+   2026-10-16). Akcije panela na narudzbini (`plugin0_order_*`) traze i pravo Edit na Orders (14.8).
 8. **Kontroler** poziva Core i servise plugin0, a Core cita i pise bazu preko `BaseRepository` (poglavlje 13.3).
 9. **Twig sablon** iz `views/templates/admin/` renderuje HTML. Sablon nasledjuje
    [layout.html.twig](../views/templates/admin/layout.html.twig), koji nasledjuje
@@ -963,13 +982,21 @@ Put zahteva:
 
 Isto do PHP-FPM-a, ali ulaz je `8-2-4/index.php`. On ucitava `config/config.inc.php` i poziva
 `Dispatcher::getInstance()->dispatch()` (`classes/Dispatcher.php`), koji okida isti hook
-`actionDispatcherBefore`. plugin0 za sada nema front controller-e. Planirani `asyncprocess`, checkout i webhook
-ce ici ovim putem (`Configuration::getAsyncProcessUrl()` vec pravi link na `asyncprocess` preko
-`getModuleLink`).
+`actionDispatcherBefore` (`classes/Dispatcher.php:351`).
+
+plugin0 ima dva front controller-a, opisana u 14.7:
+- `payment`: `POST https://8-2-4.prestashop.veljko.ngrok.app/en/module/plugin0/payment` (klik na PLACE ORDER);
+- `return`: `GET https://8-2-4.prestashop.veljko.ngrok.app/en/module/plugin0/return?RETURNMAC=...&hostedCheckoutId=...`
+  (povratak kupca sa Worldline strane).
+
+Oba oblika adrese su videna u Apache access logu 2026-10-15 i 2026-10-16. Front controller-i `asyncprocess` i
+`webhook` jos ne postoje, iako `Configuration::getAsyncProcessUrl()` i Configuration stranica (polje Webhook URL)
+vec prave linkove na njih preko `getModuleLink`.
 
 ### 13.3 Primer upisa u bazu: cuvanje Worldline konekcije
 
-1. Browser salje POST na `/worldline/configuration`.
+1. Browser salje POST na `/admin174kob088ranecckhxg/index.php/modules/worldline/configuration?_token=...` (ruta
+   `plugin0_configuration`).
 2. `ConfigurationController::indexAction` poziva Core, koji kredencijale proverava kod Worldline-a i cuva
    konekciju.
 3. Core poziva `Plugin0\Infrastructure\Repository\BaseRepository::save()`, a ona poziva
@@ -1003,7 +1030,7 @@ nule, na Core biblioteci `wl-online-payments-direct/plugin-core-base` 1.0.7. Dva
 plugin0/
 ├── plugin0.php                     ← glavna klasa modula (Plugin0 extends PaymentModule): install, hook-ovi
 ├── composer.json, composer.lock    ← zavisnosti i PSR-4 autoload (Plugin0\ → src/, Logeecom\ → lib/Logeecom/)
-├── phpunit.xml                     ← demo unit testovi (tests/Unit); pokrecu se u kontejneru (14.6)
+├── phpunit.xml                     ← unit testovi (tests/Unit: demo i plugin0); pokrecu se u kontejneru (14.6)
 ├── vendor/                         ← composer install (u .gitignore); dev paketi phpunit i psr/log
 ├── config/
 │   ├── routes.yml                  ← Symfony admin rute
@@ -1012,12 +1039,12 @@ plugin0/
 ├── controllers/front/return.php    ← front controller "return": povratak sa Worldline strane, ishod, narudzbina (14.7)
 ├── src/Order/                      ← panel za placanje na admin stranici narudzbine: PaymentManager, OperationValidator, MinorUnits, OperationLog (14.8)
 ├── lib/Logeecom/                   ← demo projekat, poslovni sloj bez framework-a, bajt-identican demo src/
-│   ├── Configuration/              ← jos nije povezan: Configuration stranica ostaje na Core-u do Worldline koraka
+│   ├── Configuration/              ← nije povezan: Configuration stranica radi direktno sa Core-om (prava provera kod Worldline-a umesto demo FakeProvider-a)
 │   ├── Logs/                       ← jos nije povezan: Logs stranica cita ps_log kroz LogReader (tiket trazi kontekst)
 │   ├── PaymentMethods/             ← domen, servis, interfejsi repozitorijuma, tipovi Redirect i iFrame
 │   └── Settings/                   ← domen, servis, interfejs skladista, LogLevelApplierInterface
 ├── src/
-│   ├── Bootstrap.php               ← podize Core, registruje servise i repozitorijume
+│   ├── Bootstrap.php               ← podize Core, registruje servise, dva proxy-ja i repozitorijume
 │   ├── Configuration.php           ← Core Configuration za PrestaShop (i kljucevi podesavanja)
 │   ├── Services.php                ← fabrika demo servisa: koja implementacija stoji iza kog demo interfejsa
 │   ├── Adapter/                    ← demo interfejsi nad Core-om i PrestaShop-om (repozitorijumi, logger, applier)
@@ -1025,13 +1052,13 @@ plugin0/
 │   ├── Controller/Admin/           ← Symfony kontroleri admin stranica
 │   ├── Entity/                     ← PaymentMethodEntity (demo metoda) i PaymentOperationEntity (log capture/refund/cancel) u ps_plugin0_entity
 │   ├── Form/                       ← PaymentMethodForm: pravila forme iz demo Form Request-a
-│   └── Infrastructure/             ← implementacije Core interfejsa + Installer + BaseRepository + LogReader
-├── tests/                          ← demo unit testovi i in-memory repozitorijumi (Tests\ → tests/); tests/Unit/Order su plugin0 testovi (14.8)
+│   └── Infrastructure/             ← implementacije Core interfejsa, HostedCheckoutProxy i PaymentsProxy, PaymentActionSetting, Installer, BaseRepository, LogReader
+├── tests/                          ← demo unit testovi i in-memory repozitorijumi (Tests\ → tests/); plugin0 testovi su tests/Unit/Order, tests/Unit/Checkout i tests/Unit/Settings/PaymentActionSettingTest.php
 ├── views/
 │   ├── templates/admin/*.html.twig ← sabloni admin stranica
 │   ├── templates/front/return.tpl  ← "placanje se obradjuje" (front controller "return")
 │   └── img/                        ← placeholder logo; logotipi metoda u payment-methods/
-└── docs/                           ← CORE.md i ovaj dokument
+└── docs/                           ← CORE.md, ovaj dokument i VODIC.md (ceo plugin, fajl po fajl)
 ```
 
 ### 14.3 `plugin0.php`
@@ -1039,17 +1066,19 @@ plugin0/
 | Metoda | Kada je PrestaShop zove | Sta radi |
 |---|---|---|
 | `__construct()` | kad god ucitava modul | ime, verzija, autor, opis; `currencies = true`, `currencies_mode = 'checkbox'`, `controllers = ['payment', 'return']` (svojstva koja `PaymentModule` trazi) |
-| `install()` | dugme Install | `Bootstrap::boot()`, `parent::install()` (`PaymentModule::install`: i redovi u `module_currency`, `module_country`, `module_carrier`), `Installer::createTables()`, `registerHook('actionDispatcherBefore')`, `registerHook('paymentOptions')` |
+| `install()` | dugme Install | `Bootstrap::boot()`, `parent::install()` (`PaymentModule::install`: i redovi u `module_currency`, `module_country`, `module_carrier`), `Installer::createTables()`, `registerHook('actionDispatcherBefore')`, `registerHook('paymentOptions')`, `registerHook('displayAdminOrderMain')` |
 | `uninstall()` | dugme Uninstall | `Bootstrap::boot()`, `Installer::dropTables()` (**brise `ps_plugin0_entity`**), `parent::uninstall()` |
 | `getContent()` | dugme Configure | preusmerava na rutu `plugin0_configuration` |
 | `hookActionDispatcherBefore()` | jednom po zahtevu (front, module front controller-i, legacy admin, Symfony admin); ne okida se iz `bin/console` ni webservice-a | `Bootstrap::boot()` |
 | `hookPaymentOptions($params)` | korak placanja na checkout-u (`CheckoutPaymentStep` preko `PaymentOptionsFinder`), sa korpom u `$params['cart']` | jedna `PaymentOption` po metodi iz `Checkout\AvailablePaymentMethods::forCart` (aktivna, tip Redirect, Code = Worldline ID proizvoda koji Core podrzava, valuta korpe, zemlja adrese za fakturu); tekst = ime metode, `action` = front controller `payment`, POST polje `method` = id metode |
+| `hookDisplayAdminOrderMain($params)` | stranica narudzbine u adminu (`src/PrestaShopBundle/Resources/views/Admin/Sell/Order/Order/view.html.twig:73`, izmedju blokova Details i Payment), sa `$params['id_order']` | za narudzbine ovog modula kartica "Worldline payment" (`Order\PaymentManager::panel`, Twig `order_payment_panel.html.twig`); greska ide u log i u crvenu poruku umesto kartice (14.8) |
 | `checkCurrency($cart)` | iz `hookPaymentOptions` i iz front controller-a | PrestaShop-ovo ogranicenje valuta modula (`module_currency`), kao u `ps_wirepayment` |
 
 U `install()` se Core podize rucno, jer hook u tom trenutku jos nije registrovan. Modul u dev prodavnici je bio
 instaliran dok je jos nasledjivao `Module`; hook `paymentOptions` i redovi ogranicenja (`module_currency`,
 `module_country`, `module_carrier`) dodati su 2026-10-14 skriptom u kontejneru, bez reinstalacije (uninstall bi
-obrisao `ps_plugin0_entity` i Worldline konekciju u njoj).
+obrisao `ps_plugin0_entity` i Worldline konekciju u njoj), a hook `displayAdminOrderMain` isto tako 2026-10-15
+(po beleskama iz razvoja). Stanje 2026-10-16 (baza, `ps_hook_module`): modul ima registrovana sva tri hook-a.
 
 ### 14.4 `Bootstrap.php`
 
@@ -1072,13 +1101,26 @@ implementaciju.
 | `ShopPaymentService` | `Infrastructure\ShopPaymentService` | samo loguje Core radnje nad Worldline podesavanjima metoda (save, enable, disconnect); metode iz dema ne dira |
 | `ShopOrderService` | `Infrastructure\ShopOrderService` | pravi PrestaShop narudzbinu posle placanja i menja joj status; jedino mesto koje to radi (14.7) |
 
+**Proxy-ji** (`initProxies()`, posle `parent::initProxies()`): Core svoje proxy-je registruje bas u
+`initProxies()`, koji se izvrsava posle `initServices()`, a u `ServiceRegister`-u vazi poslednja registracija istog
+kljuca. Zato zamena mora ovde; u `initServices()` bi je Core pregazio.
+- `HostedCheckoutProxyInterface` → `Infrastructure\HostedCheckoutProxy`: zamena Core proxy-ja. Za pojedinacni
+  karticni brend (npr. `1` = Visa) uskladjuje mobile i redirect deo zahteva sa karticnim `authorizationMode`-om
+  (inace Worldline placanje obradi kao direct sale) i primenjuje izbor PRE_AUTHORIZATION sa Settings stranice
+  (14.8; CORE.md zamka 32).
+- `PaymentsProxyInterface` → `Infrastructure\PaymentsProxy`: omotac oko Core `PaymentsProxy`-ja. Posle delimicnih
+  naplata zatvorenu rezervaciju tumaci kao naplaceno (status 9) ili, kad je sve vraceno, kao vraceno (status 8)
+  (14.8; CORE.md zamka 33).
+
 **Repozitorijumi** (`initRepositories()`, preko `RepositoryRegistry::registerRepository`):
 - `BaseRepository` (tabela `ps_plugin0_entity`) za: `ConfigEntity`, `Process`, `LogData`,
   `ConnectionConfigEntity`, `DisconnectTime`, `LogSettingsEntity`, `PayByLinkSettingsEntity`,
   `PaymentSettingsConfigEntity`, `WebhookSettingsEntity`, `PaymentLinkEntity`, `PaymentMethodConfigEntity`,
-  `PaymentTransactionEntity`, `PaymentTransactionLockEntity`, `ProductTypeEntity`, `TokenEntity`, i jedini
-  entitet koji nije Core-ov: `Plugin0\Entity\PaymentMethodEntity` (tip `PaymentMethod`, indeksi `code`, `type`,
-  `isActive`, `sortOrder`): metoda placanja iz demo projekta, vidi 14.6.
+  `PaymentTransactionEntity`, `PaymentTransactionLockEntity`, `ProductTypeEntity`, `TokenEntity`, i dva entiteta
+  koja nisu Core-ova: `Plugin0\Entity\PaymentMethodEntity` (tip `PaymentMethod`, indeksi `code`, `type`,
+  `isActive`, `sortOrder`): metoda placanja iz demo projekta, vidi 14.6; i `Plugin0\Entity\PaymentOperationEntity`
+  (tip `PaymentOperation`, indeksi `orderId`, `createdAt`): jedan pokusaj capture, refund ili cancel sa stranice
+  narudzbine, vidi 14.8.
 - `LogsRepository` (nasledjuje `BaseRepository`, ista tabela, plus napredna pretraga) za `MonitoringLog` i
   `WebhookLog`.
 - `QueueItem` namerno nije registrovan; dolazi sa `QueueItemRepository` u koraku za pozadinske zadatke.
@@ -1096,9 +1138,18 @@ implementaciju.
 | `plugin0_payment_method_delete` | `/worldline/payment-methods/{id}/delete` | POST | `PaymentMethodsController::deleteAction` | — |
 | `plugin0_settings` | `/worldline/settings` | GET, POST | `SettingsController::indexAction` | `settings.html.twig` |
 | `plugin0_logs` | `/worldline/logs` | GET | `LogsController::indexAction` | `logs.html.twig` |
+| `plugin0_order_capture` | `/worldline/orders/{orderId}/capture` | POST | `OrderPaymentController::captureAction` | — (forma u panelu na narudzbini) |
+| `plugin0_order_refund` | `/worldline/orders/{orderId}/refund` | POST | `OrderPaymentController::refundAction` | — |
+| `plugin0_order_cancel` | `/worldline/orders/{orderId}/cancel` | POST | `OrderPaymentController::cancelAction` | — |
 
-- Sve rute osim `api_plugin0_core_info` imaju `_legacy_controller: AdminPlugin0Configuration`.
-- `{id}` je ceo broj (`[1-9][0-9]{0,17}`); `create` i `{id}/edit` se ne mesaju jer se putanje razlikuju.
+- Kolona Putanja je putanja iz `config/routes.yml`. PrestaShop svakoj ruti modula doda prefiks `/modules`
+  (`src/PrestaShopBundle/Routing/YamlModuleLoader.php:108`), pa je prava adresa, na primer,
+  `/admin174kob088ranecckhxg/index.php/modules/worldline/orders/16/refund?_token=...` (videno u Apache access logu
+  2026-10-16).
+- Rute stranica plugina imaju `_legacy_controller: AdminPlugin0Configuration`. Tri rute panela imaju
+  `_legacy_controller: AdminOrders`, a akcije u `OrderPaymentController`-u anotaciju `@AdminSecurity`, pa zaposleni
+  bez prava Edit na Orders dobija 403. `api_plugin0_core_info` nema `_legacy_controller`.
+- `{id}` i `{orderId}` su ceo broj (`[1-9][0-9]{0,17}`); `create` i `{id}/edit` se ne mesaju jer se putanje razlikuju.
 - Settings, Payment methods i Logs nasledjuju `ConnectedController`: postoje samo dok je prodavnica povezana sa
   Worldline-om, inace vode na Configuration.
 - Front strana: `index.php?fc=module&module=plugin0&controller=payment` (`controllers/front/payment.php`,
@@ -1113,13 +1164,17 @@ Ukratko sta stranice rade:
   filterima po valuti, zemlji, tipu (Redirect/iFrame) i statusu, stranicenjem i prekidacem; forma za dodavanje i
   izmenu (Name, Code jedinstven, Type, Currencies, Countries, Sort order, Active); brisanje sa potvrdom. Valute i
   zemlje se biraju medju onima ukljucenim u PrestaShop-u (`Adapter\ReferenceData`). Svaka metoda je jedan red tipa
-  `PaymentMethod` u `ps_plugin0_entity`. Aktivne metode cija lista valuta sadrzi valutu korpe, a lista zemalja
-  zemlju adrese za fakturu, PrestaShop nudi kupcu na checkout-u (`hookPaymentOptions`).
+  `PaymentMethod` u `ps_plugin0_entity`. Kupcu se na checkout-u (`hookPaymentOptions`) nude metode koje su aktivne,
+  tipa Redirect, sa Code-om koji je Worldline ID proizvoda koji Core podrzava a nije iz
+  `PaymentProductId::SEPARATE_CAPTURE_SUPPORTED`, i cija lista valuta sadrzi valutu korpe, a lista zemalja zemlju
+  adrese za fakturu (`Checkout\AvailablePaymentMethods`, 14.7).
 - **Settings**: Log level, Default currency i Rows per page, pravila iz demo `SettingsService`-a; vrednosti su
   `ConfigEntity` redovi u `ps_plugin0_entity` pod Core kljucem `minLogLevel` (Log level, Core broj nivoa) i
   kljucevima `defaultCurrency` i `rowsPerPage` (`Adapter\SettingsRepository`). Default za Log level je Info, jer je
   `_PS_MODE_DEV_ = false`; default za Default currency je `EUR` ako je prodavnica ima, inace prazno
-  ("Choose a currency"), kao u demu; default za Rows per page je 10.
+  ("Choose a currency"), kao u demu; default za Rows per page je 10. Cetvrto polje, Payment action (SALE,
+  FINAL_AUTHORIZATION ili PRE_AUTHORIZATION), nije iz dema: cuva Core `PaymentSettings` i plugin kljuc
+  `cardAuthorizationMode` (`Infrastructure\PaymentActionSetting`, 14.8).
 - **Logs**: cita zapise sa prefiksom `WORLDLINE` iz `ps_log`, najnovije prve, sa filterom po nivou i
   stranicenjem (`LogReader`); velicina stranice je Rows per page.
 
@@ -1127,7 +1182,10 @@ Ukratko sta stranice rade:
 
 Demo projekat (`/home/veljkozbiljic/laravel-docker`) ima poslovni sloj u `src/` bez ijedne Laravel klase:
 `Logeecom\Configuration`, `Logeecom\Logs`, `Logeecom\PaymentMethods` i `Logeecom\Settings`. Ta cetiri foldera su
-kopirana u `lib/Logeecom/` bez izmena (`diff -rq` je prazan), zajedno sa unit testovima (`tests/Unit`, `tests/Support`).
+kopirana u `lib/Logeecom/` bez izmena (`diff -rq` je prazan, ponovo provereno 2026-10-16), zajedno sa unit
+testovima tog sloja (`tests/Unit/PaymentMethods`, `tests/Unit/Settings/Service`, `tests/Unit/Configuration`, identicni
+demu) i pomocnim klasama (`tests/Support`; jedina razlika je potpis `log()` u `RecordingLogger.php`, prilagodjen
+`psr/log` 1.1 koji nosi PrestaShop).
 Laravel adaptere iz demo `app/` (Eloquent repozitorijumi, service provideri, Monolog) ovde zamenjuju:
 
 | Demo interfejs | Implementacija u plugin0 | Nad cime |
@@ -1142,7 +1200,9 @@ Laravel adaptere iz demo `app/` (Eloquent repozitorijumi, service provideri, Mon
 demu service provideri. `LoggerService` nivo logovanja cita iz demo `SettingsService::logLevel()`.
 `Infrastructure\CoreLogLevel` prevodi imena nivoa iz dema i PSR-3 u Core brojeve i nazad.
 
-Unit testovi (91, iz dema) se pokrecu u kontejneru, na PHP-u 8.2 na kome modul radi:
+Unit testovi se pokrecu u kontejneru, na PHP-u 8.2 na kome modul radi. Stanje 2026-10-16: 169 pokretanja, 460
+provera, svi prolaze; 91 su demo testovi, a 78 testovi plugina (`tests/Unit/Order`, `tests/Unit/Checkout`,
+`tests/Unit/Settings/PaymentActionSettingTest.php`):
 
 ```
 docker exec -u 1000:1000 -e HOME=/tmp/plugin0-home -w /var/www/html/public/prestashop/8-2-4/modules/plugin0 logeecom_dev php -d xdebug.mode=off vendor/bin/phpunit
@@ -1161,8 +1221,10 @@ Tiket MIDU-1221. Placanje vodi Core (`CheckoutAPI`); plugin povezuje PrestaShop 
 2. `payment` ponovo proverava korpu i metodu (`AvailablePaymentMethods::forCart`), pa zove
    `CheckoutAPI::get()->hostedCheckout($storeId)->createSession(new HostedCheckoutSessionRequest(PrestaShopCartProvider::for($cart), $returnUrl, PaymentProductId::parse($method->code)))`.
    `returnUrl` = `Link::getModuleLink('plugin0', 'return', [], true)`.
-3. Core salje Worldline-u `POST /hostedcheckouts` (sandbox: `payment.preprod.direct.worldline-solutions.com`) i
-   cuva `PaymentTransaction` u `ps_plugin0_entity` (tip `PaymentTransaction`; merchantReference = ID korpe,
+3. Core prvo pita Worldline koje proizvode nudi za korpu (`GET /products`, iz
+   `HostedCheckoutService::createSession`, linija 54), pa salje `POST /hostedcheckouts` kroz plugin klasu
+   `Infrastructure\HostedCheckoutProxy` (14.4) (sandbox: `payment.preprod.direct.worldline-solutions.com`) i cuva
+   `PaymentTransaction` u `ps_plugin0_entity` (tip `PaymentTransaction`; merchantReference = ID korpe,
    paymentId = hostedCheckoutId + `_0`, returnHmac = RETURNMAC, status 0).
 4. Greska → kupac nazad na korak placanja sa porukom; uspeh → `Tools::redirect($response->getRedirectUrl())`.
 5. Worldline vraca kupca na `return` i dodaje query parametre `hostedCheckoutId` i `RETURNMAC`.
@@ -1250,10 +1312,15 @@ prikazuje karticu "Worldline payment" za narudzbine ciji je `Order::module` = pl
      (merchantReference = ID korpe);
    - `CheckoutAPI::get()->payment($storeId)->updateOrderStatus($paymentId)`: Core procita placanje od Worldline-a
      (`GET /payments/{id}/details`) i kroz `Infrastructure\ShopOrderService` dovede status narudzbine u red sa njim
-     (bez webhook-a niko drugi to ne bi uradio, npr. posle CAPTURE_REQUESTED → CAPTURED);
-   - `OrderAPI::get()->orders($storeId)->getDetails($cartId)`: jos jedan `GET /payments/{id}/details`; Core
-     `OrderService` iz njega racuna za svaku akciju `possible`, `done`, `pending`, `available` (`OrderDetails`,
-     `OrderAction`; formule u docs/CORE.md 5.5);
+     (bez webhook-a niko drugi to ne bi uradio, npr. posle CAPTURE_REQUESTED → CAPTURED); posle toga panel ponovo
+     procita transakciju, da prikaze novi status;
+   - `PaymentManager::reconcileLog`: unutar `StoreContext::doWithStore` jos jedan `GET /payments/{id}/details` kroz
+     `PaymentsProxyInterface`; redovi loga koji su jos `pending` dobijaju konacan ishod po Worldline operacijama
+     (`OperationLog::reconcileForOrder`); greska ovde samo upise WARNING i ne rusi panel;
+   - `OrderAPI::get()->orders($storeId)->getDetails($cartId)`: jos jedan `GET /payments/{id}/details` i po jedan
+     `GET /payments/{id}` za svaku operaciju u statusu PENDING_CAPTURE ili CAPTURED (za operacije `_1`, `_2`...
+     Worldline vraca 404, videno u `MonitoringLog`-u 2026-10-16); Core `OrderService` racuna za svaku akciju
+     `possible`, `done`, `pending`, `available` (`OrderDetails`, `OrderAction`; formule u docs/CORE.md 5.5);
    - `Order\OperationLog::forOrder`: redovi tipa `PaymentOperation` iz `ps_plugin0_entity`, najnoviji prvi;
    - Twig `views/templates/admin/order_payment_panel.html.twig` preko Symfony `twig` servisa; forme vidi samo
      zaposleni sa pravom Edit na Orders (`security.authorization_checker`, `PageVoter::UPDATE`, `AdminOrders`).
@@ -1264,49 +1331,76 @@ prikazuje karticu "Worldline payment" za narudzbine ciji je `Order::module` = pl
    - `MinorUnits::parse`: tekst "12.34" → Core `Amount` kao ceo broj u najmanjim jedinicama (1234), bez float-a;
      prihvata samo pozitivan broj sa najvise onoliko decimala koliko valuta ima (`Currency::getMinorUnits`);
    - `getDetails` (svezo stanje), pa `OperationValidator::validate`: iznos > 0; capture ≤ `capture.available`;
-     refund ≤ `refund.available`; cancel samo ako nista nije naplaceno ni zatrazeno za naplatu, i ≤ `cancel.available`;
-     odbijanje = red u logu sa ishodom `rejected`, poruka trgovcu, **nijedan POST Worldline-u** (GET za stanje jeste
-     poslat);
+     refund ≤ `refund.available`; cancel ≤ `cancel.available`, a odbija se kad je sve naplaceno ili zatrazeno za
+     naplatu (`OperationValidator::fullyCaptured`), pa posle delimicnog capture-a ostatak moze da se otkaze (pravilo
+     ublazeno 2026-10-16; ranije je cancel bio odbijen cim je bilo sta naplaceno); odbijanje = red u logu sa ishodom
+     `rejected`, poruka trgovcu, **nijedan POST Worldline-u** (GET za stanje jeste poslat);
    - `OrderAPI::get()->capture|refund|cancel($storeId)->handle(new CaptureRequest|RefundRequest|CancelRequest($paymentId, $amount))`:
      Core samo prosledi SDK-u (`POST /payments/{id}/capture|refund|cancel`), bez provere i bez promene narudzbine;
      greska = ishod `refused` u logu, narudzbina se ne dira;
    - uspeh = ishod `success` (Worldline status CAPTURED / REFUNDED / CANCELLED) ili `pending` (npr. CAPTURE_REQUESTED,
-     REFUND_REQUESTED), pa `updateOrderStatus($paymentId)`: **jedini put do statusa narudzbine**, isti kao na
+     REFUND_REQUESTED); red u logu nosi i Worldline ID operacije iz odgovora (`providerOperationId`, npr.
+     `10300628270_1`); zatim `updateOrderStatus($paymentId)`: **jedini put do statusa narudzbine**, isti kao na
      povratku kupca (14.7); panel ne tumaci status i ne pise ga.
 3. Nazad na stranicu narudzbine (`admin_orders_view`) sa flash porukom; panel ponovo osvezi stanje.
 
 **Log operacija:** `Entity\PaymentOperationEntity` (tip `PaymentOperation`, indeksi `orderId` i `createdAt`):
 orderId, paymentId, action, amount (najmanje jedinice) + currency, outcome (`rejected`, `refused`, `pending`,
-`success`), message, providerStatus, employeeId, createdAt. Svaki pokusaj ostavlja red, i onaj koji nije prosao
-validaciju; isti dogadjaj ide i u `ps_log` (komponenta PaymentManager).
+`success`), message, providerStatus, providerOperationId (od 2026-10-16; stariji redovi ga nemaju), employeeId,
+createdAt. Svaki pokusaj ostavlja red, i onaj koji nije prosao validaciju; isti dogadjaj ide i u `ps_log`
+(komponenta PaymentManager). Worldline capture i refund cesto prvo prihvati kao `*_REQUESTED`, pa red ostaje
+`pending`; pri sledecem otvaranju panela `OperationLog::reconcile` takav red upari sa Worldline operacijom (po
+`providerOperationId`, a stari red bez njega po vrsti i iznosu, samo kad je jednoznacno; `_0` se preskace) i upise
+`success` ili `refused`.
 
 **Payment action (Settings stranica):** Core bez sacuvanih `PaymentSettings` podrazumeva SALE
 (`GeneralSettingsService::getPaymentSettings`): Worldline naplati odmah, placanje dobija status 9, pa capture i cancel
-nisu moguci (samo refund). Polje "Payment action" (`Infrastructure\PaymentActionSetting`, cuva kroz
-`AdminAPI::get()->generalSettings($storeId)->savePaymentSettings(...)` sa ostalim poljima prepisanim iz trenutnih)
-bira FINAL_AUTHORIZATION: nova placanja ostaju u statusu 5 (authorized), narudzbina dobija status iz
+nisu moguci (samo refund). Polje "Payment action" (`Infrastructure\PaymentActionSetting`) ima tri izbora:
+- SALE: naplata odmah;
+- FINAL_AUTHORIZATION: samo rezervacija, capture mora biti pun (rok 7 dana po tekstu polja);
+- PRE_AUTHORIZATION: samo rezervacija, dozvoljeni delimicni capture i cancel ostatka (rok 30 dana po tekstu polja).
+
+Core u opstim `PaymentSettings` zna samo SALE i FINAL_AUTHORIZATION, pa se cuvaju dve vrednosti: Core
+`paymentAction` (SALE ili FINAL_AUTHORIZATION, kroz `AdminAPI::get()->generalSettings($storeId)->savePaymentSettings(...)`
+sa svim ostalim poljima prepisanim iz trenutnih) i plugin kljuc `cardAuthorizationMode` (FINAL_AUTHORIZATION ili
+PRE_AUTHORIZATION, `ConfigEntity`), koji `Infrastructure\HostedCheckoutProxy` upise u karticni `authorizationMode`.
+Sa oba "authorize" izbora nova placanja ostaju u statusu 5 (authorized), narudzbina dobija status iz
 `paymentAuthorizedStatus` (podrazumevano `PS_OS_BANKWIRE`, "Awaiting bank wire payment", vidi `StoreService`), a
-trgovac naplacuje ili otkazuje sa stranice narudzbine. Vazi za nova placanja; Restore defaults vraca SALE.
+trgovac naplacuje ili otkazuje sa stranice narudzbine. Vazi za nova placanja; Restore defaults vraca SALE. Stanje
+dev baze 2026-10-16: Core `FINAL_AUTHORIZATION` + `cardAuthorizationMode = PRE_AUTHORIZATION`, dakle izbor
+PRE_AUTHORIZATION.
 
 **Sta status narudzbine radi posle operacije** (Core `StatusMappingService` + `StoreService` mapiranje, ne plugin):
-capture ceo → 9 → `PS_OS_PAYMENT`; cancel → 6 → `PS_OS_CANCELED`; refund ceo → `PS_OS_REFUND`; delimican refund →
-mapiranje `''` → narudzbina se ne menja; delimican capture → status koji Worldline vrati (5 ili 9; nije provereno).
+capture ceo → 9 → `PS_OS_PAYMENT`; cancel cele rezervacije → 6 → `PS_OS_CANCELED`; refund svega naplacenog →
+`PS_OS_REFUND`; delimican refund → status za "partially refunded", koji je od 2026-10-16 `PS_OS_PAYMENT` (ranije
+`''`, pa se narudzbina nije menjala: Core `getFullStatusMapping` taj status vraca pre mapiranja po kodu;
+`PaymentActionSetting::save` prazno popunjava i u vec sacuvanim podesavanjima).
+
+Delimican capture (PRE_AUTHORIZATION): Worldline svaku naplatu vodi kao posebnu operaciju (`_1`, `_2`..., status 9),
+a prvobitna rezervacija `_0` ostaje u statusu 5 sa `isRefundable = false` i kad od nje nista nije ostalo (videno
+2026-10-16 na placanju 10300628270: 30 + 11 + 10 naplaceno, 17,93 otkazano od 68,93). Core status cita samo sa
+`_0`, pa bi narudzbina ostala "autorizovano", a refund bio 0. Plugin klasa `Infrastructure\PaymentsProxy` (14.4)
+zato zatvorenu rezervaciju tumaci kao 9 / CAPTURED (refund moguc), a kad je vraceno sve naplaceno kao 8 / REFUNDED.
+Narudzbina 16 je tako presla 10 → 2 → 7 (`ps_order_history`, 2026-10-16).
 
 **Provereno 2026-10-15 skriptom u kontejneru** (narudzbina 9, placanje `10300539697_0`, status 9, 4,44 EUR vec
 vraceno iz Merchant Portala): panel daje total 22.94, captured 22.94, refunded 4.44, refund available 18.50, capture
 i cancel nisu moguci; refund 18.51 → "Refund of 18.51 EUR exceeds the refundable amount of 18.50 EUR."; "abc", "0",
 "-5", "1.005" → "Enter a positive amount..."; cancel → "The payment cannot be cancelled: 22.94 EUR is already
 captured..."; capture → "Capture is not possible..."; svaki pokusaj u logu sa ishodom `rejected`, `current_state`
-narudzbine ostao 2; probni redovi loga su posle obrisani. Unit testovi: `tests/Unit/Order` (32 testa).
+narudzbine ostao 2; probni redovi loga su posle obrisani. Unit testovi (stanje 2026-10-16): `tests/Unit/Order`
+52 pokretanja, uz to `tests/Unit/Checkout` (HostedCheckoutProxy) 17 i `tests/Unit/Settings/PaymentActionSettingTest.php` 9.
 
-**Hook greske se ne vide same od sebe:** `Hook::coreCallHook` (`classes/Hook.php`) van debug rezima hvata svaki
-`Exception` i vraca `''`, pa kartica samo nestane. Tako je 2026-10-15 prva verzija sablona (Twig petlja
+**Hook greske se ne vide same od sebe:** `Hook::callHookOn()` (`classes/Hook.php:411-439`) van debug rezima hvata
+svaki `Exception` iz hook metode i vraca `''`, pa kartica samo nestane. `Hook::coreCallHook()` (linije 1081-1084)
+samo pozove metodu, unutar tog `try` bloka; ranije je ovde, kao i u komentaru u `plugin0.php:133`, pogresno pisalo
+da izuzetak hvata `coreCallHook`. Tako je 2026-10-15 prva verzija sablona (Twig petlja
 `for a, b, c, d in` koja dodeli samo indeks i ceo niz) pala na `path('plugin0_order_0')` bez traga.
 `hookDisplayAdminOrderMain` zato gresku upisuje u log (ERROR, komponenta PaymentManager) i prikazuje crvenu poruku.
 Posle izmene sablona: `bin/console cache:clear --no-warmup --env=prod` (Twig kes). Render provereno skriptom sa
 podignutim prod kernel-om i SuperAdmin tokenom: kartica za narudzbinu 9 sa tri forme i `_token` u adresi.
 
-**FINAL_AUTHORIZATION ne daje autorizaciju (2026-10-15, otvoreno):** posle cuvanja "Authorize only" (Settings,
+**FINAL_AUTHORIZATION ne daje autorizaciju (2026-10-15; uzrok nadjen i zaobidjen, vidi kraj pasusa):** posle cuvanja "Authorize only" (Settings,
 14:37:52) tri placanja Visa karticom kroz Hosted Checkout (korpe 13, 14, 15; narudzbine 12, 13, 14) su ipak naplacena
 odmah: Worldline status 9, u Merchant Portal-u History "Direct sale (payment)". Core debug log (Core `LogSettings`
 debugMode ukljucen u dev prodavnici; `MonitoringLog` redovi u `ps_plugin0_entity`) pokazuje da je u `POST
@@ -1314,10 +1408,21 @@ debugMode ukljucen u dev prodavnici; `MonitoringLog` redovi u `ps_plugin0_entity
 "FINAL_AUTHORIZATION"` i `paymentProductId = "1"`. Plugin i Core dakle traze samo autorizaciju; zasto Worldline radi
 direct sale nije utvrdjeno. Placanja kolege na istom nalogu (`WC-...`, Visa) jesu u statusu 5 (PENDING_CAPTURE), ali
 bez 3-D Secure; kojim API-jem i sa kojim `authorizationMode` ih pravi nije poznato.
+**Uzrok (probe 2026-10-15):** za pojedinacni karticni brend Core u isti zahtev uz karticni `FINAL_AUTHORIZATION`
+stavlja i `mobilePaymentMethodSpecificInput.authorizationMode = SALE` i
+`redirectPaymentMethodSpecificInput.requiresApproval = false` (`CreateHostedCheckoutRequestTransformer` ih uskladjuje
+samo za proizvode iz `PaymentProductId::SEPARATE_CAPTURE_SUPPORTED`), a Worldline preprod tada placanje obradi kao
+direct sale. Isti zahtev bez tog dela, ili sa uskladjenim vrednostima, daje status 5. **Resenje:** plugin klasa
+`Infrastructure\HostedCheckoutProxy` (14.4) uskladjuje ta dva dela sa karticnim rezimom; po beleskama iz razvoja
+placanje sa FINAL_AUTHORIZATION posle toga ostaje u statusu 5. Detalji: CORE.md zamka 32.
 
-**Nije provereno:** panel u browseru (403 za profil bez prava), stvarni capture/cancel
-(traze placanje sa FINAL_AUTHORIZATION), Worldline status posle delimicnog capture-a, da li sandbox refund prolazi
-odmah (REFUNDED) ili ostaje REFUND_REQUESTED.
+**Provereno u browseru 2026-10-16 (po beleskama iz razvoja):** svih 7 kriterijuma prihvatanja tiketa MIDU-1224,
+ukljucujuci autorizaciju i capture, delimican capture, cancel, refund do statusa "Refunded", validacione poruke bez
+POST-a Worldline-u i 403 za profil bez prava Edit na Orders (u prodavnici je ostao test profil Support, ID 5). Iz
+baze 2026-10-16: sandbox je na capture vracao i `CAPTURED` odmah (narudzbina 16) i `CAPTURE_REQUESTED` (narudzbina
+15); refund-i narudzbine 16 su vratili `REFUNDED` odmah. **Poznato ogranicenje:** pri prelasku u "Payment accepted"
+PrestaShop upise uplatu za ceo iznos fakture, ne za naplaceni (narudzbina 16: uplata 68,93, naplaceno 51,00); po
+beleskama je odluceno da ostane tako.
 
 ---
 
@@ -1346,9 +1451,10 @@ trenutno ne mozes da vidis iz Windows browsera. Da bi mogao, u compose fajl bi t
 | Apache pristupi | `/var/log/apache2/other_vhosts_access.log` | Apache (`other-vhosts-access-log.conf`); `access.log` je prazan |
 | PHP-FPM | `/var/log/php8.2-fpm.log` | PHP-FPM master |
 | MySQL | `/var/log/mysql/error.log` | `mysqld` |
-| PrestaShop (Symfony) | `systems/prestashop/8-2-4/var/logs/prod-YYYY-MM-DD.log` (u WSL-u) | PrestaShop |
+| PrestaShop (Symfony) | `/home/veljkozbiljic/logeecom/systems/prestashop/8-2-4/var/logs/prod-YYYY-MM-DD.log` (u WSL-u) | PrestaShop |
 | PrestaShop log u bazi | tabela `ps_log` (Advanced Parameters → Logs) | PrestaShop i plugin0 `LoggerService` |
-| Core logovi plugin0 | `ps_log`, poruke sa prefiksom `WORLDLINE`; stranica Logs u plugin0 | `LoggerService` |
+| Core i plugin0 logovi | `ps_log`, poruke sa prefiksom `WORLDLINE`; stranica Logs u plugin0 | `LoggerService` (za Core, `ShopOrderService`, panel na narudzbini i demo servise preko `Adapter\CoreLogger`); upisuje samo nivoe koje dozvoljava Log level sa Settings stranice (default Info, pa DEBUG ne) |
+| razgovor sa Worldline-om | `ps_plugin0_entity`, tip `MonitoringLog` (zahtev i odgovor), samo dok je Core debug mode ukljucen (u dev prodavnici ukljucen 2026-10-16, 287 redova); nema stranicu, gleda se SQL-om | Core `CommunicatorLoggerHelper` |
 
 Primer:
 
@@ -1374,8 +1480,14 @@ docker exec -u www-data logeecom_dev php /var/www/html/public/prestashop/8-2-4/b
 `-u www-data` je obavezno. `docker exec` podrazumevano radi kao `root`, pa bi kes fajlovi pripali `root`-u, a
 PHP-FPM koji radi kao `www-data` ne bi mogao da ih menja.
 
-**Composer.** Iz WSL-a, u `/home/veljkozbiljic/logeecom/plugin0`: `composer install` posle kloniranja ili
-izmene `composer.lock`.
+**Composer.** U kontejneru, kao korisnik 1000, posle kloniranja ili izmene `composer.lock` (komanda u 4.1); u
+WSL-u composer-a nema.
+
+**Unit testovi**, isto u kontejneru (14.6):
+
+```bash
+docker exec -u 1000:1000 -e HOME=/tmp/plugin0-home -w /var/www/html/public/prestashop/8-2-4/modules/plugin0 logeecom_dev php -d xdebug.mode=off vendor/bin/phpunit
+```
 
 **Shell u kontejneru:**
 
@@ -1402,7 +1514,7 @@ koriste PrestaShop moraju da ucitaju `config/config.inc.php` i `modules/plugin0/
 | `docker compose down` | **brise se** | ostaju | ostaje |
 | `docker compose down -v` | **brise se** | **brisu se sve baze** | ostaje |
 | `docker volume rm logeecom_db_volume` | — | **brisu se sve baze** | ostaje |
-| Uninstall plugin0 u adminu | ostaje | **brise se `ps_plugin0_entity`** (i Worldline konekcija) | ostaje |
+| Uninstall plugin0 u adminu | ostaje | **brise se `ps_plugin0_entity`**: Worldline konekcija, sva podesavanja, metode placanja, transakcije, log operacija i MonitoringLog; narudzbine u `ps_orders` ostaju | ostaje |
 
 Posle brisanja volume-a, pri sledecem startu Docker bi u novi prazan volume kopirao `/var/lib/mysql` iz image-a.
 Ostale bi samo sistemske baze; prodavnice ne bi radile.
@@ -1449,7 +1561,8 @@ Sve se kucaju u WSL Ubuntu terminalu.
 | istorija image-a (dockware koraci) | `docker image history logeecom-app --no-trunc` |
 | ponovni build image-a | `docker compose up -d --build app` |
 | backup baze | `docker exec logeecom_dev mysqldump -uroot -proot --single-transaction prestashop > prestashop-backup.sql` |
-| zavisnosti plugin0 | `cd /home/veljkozbiljic/logeecom/plugin0 && composer install` |
+| zavisnosti plugin0 (u kontejneru) | `docker exec -u 1000:1000 -e HOME=/tmp/plugin0-home -w /var/www/html/public/prestashop/8-2-4/modules/plugin0 logeecom_dev composer install` |
+| unit testovi plugin0 | `docker exec -u 1000:1000 -e HOME=/tmp/plugin0-home -w /var/www/html/public/prestashop/8-2-4/modules/plugin0 logeecom_dev php -d xdebug.mode=off vendor/bin/phpunit` |
 
 ---
 
@@ -1464,8 +1577,9 @@ Sve se kucaju u WSL Ubuntu terminalu.
 - Kako je baza `prestashop` napravljena pre instalacije (instaler ili rucno) i da li je instalacija isla kroz
   browser ili CLI.
 - Tacna linija skripte paketa `mysql-server-8.0` koja pravi folder `/var/lib/mysql`.
-- Da li `ActionDispatcherLegacyHooksSubscriber` okida hook za Symfony rute (navedeno po komentaru u
-  `plugin0.php`).
 - Da li ngrok salje `X-Forwarded-Proto: https` u tvom okruzenju (po dokumentaciji ngrok-a da).
 - Ponasanje `docker compose stop` prema `mysqld` (SIGTERM → SIGKILL posle 10 s), po pravilima za PID 1.
 - Zasto je kontejner pre 2026-10-13 bio u stanju `Exited (255)`.
+
+Stavka "da li `ActionDispatcherLegacyHooksSubscriber` okida hook za Symfony rute" uklonjena je 2026-10-16: provereno
+u kodu PrestaShop-a (13.1, korak 5), ne radom.

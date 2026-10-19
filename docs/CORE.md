@@ -59,7 +59,9 @@ PHP funkcije koje Core direktno koristi, a zavise od ekstenzija ili okruženja:
 - `sleep`/`usleep` u `TimeProvider` i `AsyncSocketHttpClient`.
 
 Dev zavisnosti Core-a (phpunit 8.5, phpstan 1.10, php-cs-fixer, php-parallel-lint, symfony/console) nisu instalirane
-u plugin0 jer composer u plugin0 nema `require-dev`. Core ima i `autoload-dev` namespace `WOP\OnlinePayments\Core\Tests\` → `tests/`,
+u plugin0: composer `require-dev` instalira samo za korenski paket (ovde plugin0), nikad za zavisnosti. plugin0 ima
+sopstveni `require-dev` (`phpunit/phpunit` ^11.5, `psr/log` ^1.1) za svoje unit testove (ranije je ovde pogrešno pisalo
+da plugin0 nema `require-dev`; usklađeno 2026-10-16). Core ima i `autoload-dev` namespace `WOP\OnlinePayments\Core\Tests\` → `tests/`,
 ali folder `tests/` nije uključen u distribuirani paket.
 
 Plugin0 sam (PrestaShop modul) koristi još: PrestaShop klase (`Module`, `Db`, `DbQuery`, `PrestaShopLogger`,
@@ -537,8 +539,12 @@ Redosled:
 3. Registracija `ActiveBrandProviderInterface` → `new ActiveBrandProvider($activeBrandResolver, $brandConfigFile)`.
 
 Plugin nasleđuje `BootstrapComponent`, pregazi `initServices()`/`initRepositories()` (uz `parent::` poziv) i zove `static::bootstrap(...)`
-(plugin0: `Plugin0\Bootstrap::boot()`, jednom po procesu, sa resolverom koji vraća `'worldline'` i putanjom `config/brand.json`,
-podrazumevani MANUAL webhook režim).
+(plugin0: `Plugin0\Bootstrap::boot()`, sa resolverom koji vraća `'worldline'` i putanjom `config/brand.json`,
+podrazumevani MANUAL webhook režim). plugin0 pregazi i `initProxies()`: posle `parent::initProxies()` registruje svoje
+`HostedCheckoutProxyInterface` i `PaymentsProxyInterface` (zamke 32 i 33); u `initServices()` bi ih Core pregazio,
+jer se `initProxies()` izvršava posle. `boot()` radi jednom po zahtevu: statički `$booted` važi do kraja zahteva, jer
+PHP posle svakog zahteva zaboravlja statičke promenljive i kad isti PHP-FPM radni proces prima sledeći zahtev
+(ranije je ovde pisalo "jednom po procesu"; za CLI skriptu je to isto, za PHP-FPM nije).
 
 Tabela svega što Bootstrap registruje (uz Infrastructure iz 4.3). Ključ = FQCN interfejsa/klase iz prve kolone; "SI" = `SingleInstance`.
 
@@ -745,9 +751,9 @@ Svi rade kroz red zadataka iz 4.9, dakle tek kad plugin obezbedi `QueueItemRepos
 ### 7.1 Boot (plugin0)
 
 1. PrestaShop učita `plugin0.php`; `require_once vendor/autoload.php`.
-2. Hook `actionDispatcherBefore` (ili `install()`/`uninstall()`/admin kontroler) zove `Plugin0\Bootstrap::boot()`.
-3. `boot()` (jednom po procesu) zove `BootstrapComponent::bootstrap(resolver 'worldline', config/brand.json)`.
-4. Core registruje sve iz 4.3 i 6.1; plugin `initServices()` dodaje `Configuration`, `JsonSerializer`, `LoggerService` (ShopLoggerAdapter), `Encryptor`, `MetadataProvider`, `StoreService`; plugin `initRepositories()` registruje `BaseRepository` za 15 klasa entiteta i `LogsRepository` za `MonitoringLog` i `WebhookLog`.
+2. Hook `actionDispatcherBefore` (ili `install()`, `uninstall()`, hook-ovi `paymentOptions` i `displayAdminOrderMain`, admin kontroleri i front kontroleri `payment` i `return`) zove `Plugin0\Bootstrap::boot()`.
+3. `boot()` (jednom po zahtevu, vidi 6.1) zove `BootstrapComponent::bootstrap(resolver 'worldline', config/brand.json)`.
+4. Core registruje sve iz 4.3 i 6.1; plugin `initServices()` dodaje `Configuration`, `JsonSerializer`, `LoggerService` (ShopLoggerAdapter), `Encryptor`, `MetadataProvider`, `StoreService`, `LanguageService`, `LogoUrlService`, `ShopPaymentService`, `ShopOrderService`; plugin `initProxies()` posle Core-ovih registracija zamenjuje `HostedCheckoutProxyInterface` (`Plugin0\Infrastructure\HostedCheckoutProxy`, zamka 32) i `PaymentsProxyInterface` (omotač `Plugin0\Infrastructure\PaymentsProxy`, zamka 33); plugin `initRepositories()` registruje `BaseRepository` za 17 klasa entiteta (15 Core-ovih i dva plugin-ova: `Plugin0\Entity\PaymentMethodEntity`, `Plugin0\Entity\PaymentOperationEntity`) i `LogsRepository` za `MonitoringLog` i `WebhookLog`.
 5. Ništa se ne instancira dok se ne zatraži (`SingleInstance` je lenj).
 
 ### 7.2 Povezivanje (kredencijali)
@@ -775,7 +781,7 @@ Svi rade kroz red zadataka iz 4.9, dakle tek kad plugin obezbedi `QueueItemRepos
 3. `HostedCheckoutService::createSession` → `HostedCheckoutProxy::createSession` → `POST /hostedcheckouts` → odgovor `hostedCheckoutId`, `RETURNMAC`, `redirectUrl`.
 4. Core čuva `PaymentTransaction(merchantReference, paymentId = hostedCheckoutId, returnHmac, status 0, customerId, paymentMethod)`.
 5. Plugin preusmerava kupca na `$response->getRedirectUrl()`.
-6. Kupac se vraća na `returnUrl`; Worldline dodaje query parametre sa ID-jem hosted checkout sesije i RETURNMAC-om (nazivi parametara su stvar Worldline API-ja i nisu u Core kodu, pa su neprovereni ovde). Plugin zove `CheckoutAPI::get()->payment($storeId)->startWaitingForOutcome(PaymentId::parse($hostedCheckoutId), $returnMac)` (sinhrono, čeka do 10 s posle povratka) ili `getPaymentOutcome(...)` u petlji sa AJAX-om.
+6. Kupac se vraća na `returnUrl`; Worldline dodaje query parametre sa ID-jem hosted checkout sesije i RETURNMAC-om (nazivi parametara su stvar Worldline API-ja i nisu u Core kodu; u plugin0 su to `hostedCheckoutId` i `RETURNMAC`, videno u Apache access logu, npr. `GET /en/module/plugin0/return?RETURNMAC=...&hostedCheckoutId=10300628270` 2026-10-16). Plugin zove `CheckoutAPI::get()->payment($storeId)->startWaitingForOutcome(PaymentId::parse($hostedCheckoutId), $returnMac)` (sinhrono, čeka do 10 s posle povratka) ili `getPaymentOutcome(...)` u petlji sa AJAX-om.
 7. `StatusUpdateService::updateOrderStatus`: `GET /payments/{id}/details`, mapiranje statusa, `ShopOrderService::createShopOrder(...)` (plugin pravi PrestaShop narudžbinu, npr. `validateOrder`), čuvanje tokena.
 8. Plugin čita `getPaymentOutcome()->getPaymentTransaction()->getStatusCode()` i prikazuje potvrdu ili grešku.
 
@@ -804,8 +810,11 @@ Svi rade kroz red zadataka iz 4.9, dakle tek kad plugin obezbedi `QueueItemRepos
 ### 7.8 Disconnect
 
 `AdminAPI::get()->generalSettings($storeId)->disconnect()` → `DisconnectService::disconnect` (vidi 5.3). Zahteva registrovan
-`ShopPaymentService` i radni red zadataka. Plugin0 trenutno umesto toga zove `ConnectionConfigRepositoryInterface::disconnect()`
-direktno unutar `StoreContext::doWithStore` (komentar u `ConfigurationController::disconnect()` objašnjava zašto).
+`ShopPaymentService` (plugin0 ga registruje od commit-a `90a8caf`) i radni red zadataka (plugin0 ga nema). Plugin0 zato
+umesto toga zove `ConnectionConfigRepositoryInterface::disconnect()` direktno unutar `StoreContext::doWithStore`
+(komentar u `ConfigurationController::disconnect()` objašnjava zašto; deo komentara koji kaže da `ShopPaymentService`
+nije registrovan je zastareo, preostali razlog je red zadataka). Posledica: plugin-ov disconnect briše samo
+kredencijale; Core podešavanja, transakcije i metode plaćanja ostaju u bazi.
 
 ### 7.9 Red zadataka
 
@@ -817,28 +826,28 @@ i po potrebi cron/wakeup poziv `TaskRunnerWakeup::wakeup()` (npr. iz hook-a ili 
 
 ## 8. Šta plugin mora da obezbedi i stanje plugin0
 
-| Obaveza | Core ključ / mehanizam | plugin0 (grana `feature/MIDU-1221`) |
+| Obaveza | Core ključ / mehanizam | plugin0 (grana `feature/MIDU-1224`, commit `06a7b91`; usklađeno 2026-10-16) |
 |---|---|---|
-| Bootstrap podklasa i poziv `bootstrap()` na svakom ulazu | `Bootstrap\BootstrapComponent` | **ima**: `Plugin0\Bootstrap::boot()` iz `actionDispatcherBefore`, `install`, `uninstall`, admin kontrolera |
+| Bootstrap podklasa i poziv `bootstrap()` na svakom ulazu | `Bootstrap\BootstrapComponent` | **ima**: `Plugin0\Bootstrap::boot()` iz `actionDispatcherBefore`, `install`, `uninstall`, hook-ova `paymentOptions` i `displayAdminOrderMain`, admin kontrolera i front kontrolera `payment` i `return` |
 | `Configuration` podklasa | `Configuration::CLASS_NAME` | **ima**: `Plugin0\Configuration` (`getAsyncProcessUrl` → module link `asyncprocess`) |
 | `ShopLoggerAdapter` | `ShopLoggerAdapter::CLASS_NAME` | **ima**: `LoggerService` → `ps_log` |
 | `Serializer` | `Serializer::CLASS_NAME` | **ima**: `JsonSerializer` |
 | `Encryptor` | `Domain\Integration\Encryption\Encryptor` | **ima**: `PhpEncryption(_NEW_COOKIE_KEY_)` |
 | `MetadataProviderInterface` | FQCN | **ima** |
-| Integracioni `StoreService` | `Domain\Integration\Stores\StoreService` | **ima** (mapiranje `PS_OS_PAYMENT`, `PS_OS_ERROR`, `PS_OS_BANKWIRE` za pending i authorized, `PS_OS_CANCELED`, `PS_OS_REFUND`, `''` za partially refunded) |
-| Repozitorijumi za entitete | `RepositoryRegistry::registerRepository` | **ima** za `ConfigEntity`, `Process`, `LogData`, `ConnectionConfigEntity`, `DisconnectTime`, `LogSettingsEntity`, `PayByLinkSettingsEntity`, `PaymentSettingsConfigEntity`, `WebhookSettingsEntity`, `PaymentLinkEntity`, `PaymentMethodConfigEntity`, `PaymentTransactionEntity`, `PaymentTransactionLockEntity`, `ProductTypeEntity`, `TokenEntity` (`BaseRepository`), `MonitoringLog`, `WebhookLog` (`LogsRepository`) |
+| Integracioni `StoreService` | `Domain\Integration\Stores\StoreService` | **ima** (mapiranje: captured `PS_OS_PAYMENT`, error `PS_OS_ERROR`, pending i authorized `PS_OS_BANKWIRE`, cancelled `PS_OS_CANCELED`, refunded `PS_OS_REFUND`, partially refunded `PS_OS_PAYMENT`; do 2026-10-16 partially refunded je bio `''`, vidi zamku 33) |
+| Repozitorijumi za entitete | `RepositoryRegistry::registerRepository` | **ima** za `ConfigEntity`, `Process`, `LogData`, `ConnectionConfigEntity`, `DisconnectTime`, `LogSettingsEntity`, `PayByLinkSettingsEntity`, `PaymentSettingsConfigEntity`, `WebhookSettingsEntity`, `PaymentLinkEntity`, `PaymentMethodConfigEntity`, `PaymentTransactionEntity`, `PaymentTransactionLockEntity`, `ProductTypeEntity`, `TokenEntity` i plugin-ove `Plugin0\Entity\PaymentMethodEntity` i `Plugin0\Entity\PaymentOperationEntity` (`BaseRepository`), `MonitoringLog`, `WebhookLog` (`LogsRepository`) |
 | Repozitorijum za `QueueItem` (`QueueItemRepository`) | `RepositoryRegistry::getQueueItemRepository` | **nema** (namerno, vidi komentar u `Bootstrap::initRepositories`) |
 | Async endpoint (`runProcess`) | `Configuration::getAsyncProcessUrl` | **nema** (kontroler `asyncprocess` ne postoji) |
 | Webhook endpoint | `WebhookAPI` | **nema** (`ConfigurationController` samo prikazuje URL module linka `webhook`) |
 | `ShopOrderService` | FQCN | **ima**: `Plugin0\Infrastructure\ShopOrderService`; pravi narudžbinu posle plaćanja (`validateOrder`) i menja joj status, idempotentno, pod MySQL `GET_LOCK` po korpi (vidi OKRUZENJE.md 14.7) |
-| `ShopPaymentService` | FQCN | **ima**: `Plugin0\Infrastructure\ShopPaymentService`, zasad samo upisuje zapis u log (checkout još ne postoji, pa PrestaShop strana nema sopstveno stanje metoda) |
+| `ShopPaymentService` | FQCN | **ima**: `Plugin0\Infrastructure\ShopPaymentService`, samo upisuje zapis u log: metode plaćanja plugina su demo metode (`Logeecom\PaymentMethods`), ne Core konfiguracije metoda, pa PrestaShop strana nema šta da menja kad Core sačuva, uključi ili obriše svoju konfiguraciju; registrovan je jer bez njega Core ne može da napravi `PaymentService` ni `DisconnectService` |
 | `LanguageService`, `LogoUrlService` | FQCN | **ima**: `LanguageService` daje aktivne jezike prodavnice sa ISO kodom velikim slovima (`'EN'`, `'SR'`, kako Core ključuje prevode); `LogoUrlService` daje `views/img/payment-methods/{productId}.svg` ili `.png` ako fajl postoji, inače `views/img/payment-method.svg` |
 | `VersionService` | FQCN | **nema**; samo `AdminAPI::version()` |
 | `CartProvider` implementacija | interfejs | **ima**: `Plugin0\Checkout\PrestaShopCartProvider` (merchantReference = ID korpe), umotan u Core `RoundingTotalsCartProvider` i `MemoryCachingCartProvider` |
-| Checkout front kontroleri, return/landing, admin akcije na narudžbini | PrestaShop strana | **ima** za Hosted Checkout (tip Redirect): `controllers/front/payment.php` (`createSession` + redirect; Core `HostedCheckoutProxyInterface` zamenjen plugin klasom `Infrastructure\HostedCheckoutProxy`, zamka 32; `PaymentsProxyInterface` omotačem `Infrastructure\PaymentsProxy`, zamka 33), `controllers/front/return.php` (`updateOrderStatus`, `getPaymentOutcome`, po potrebi `startWaitingForOutcome`); **ima** admin akcije capture/refund/cancel: hook `displayAdminOrderMain` → `Order\PaymentManager` (`OrderAPI::orders()->getDetails`, `OperationValidator` pre `OrderAPI::capture|refund|cancel`, log `PaymentOperationEntity` sa Worldline ID-jem operacije iz odgovora, pa `CheckoutAPI::payment()->updateOrderStatus`; pri otvaranju panela `OperationLog::reconcileForOrder` redovima koji su još `pending` daje konačan ishod po operacijama iz `GET /payments/{id}/details`, jer Worldline capture i refund uvek prvo prihvati kao `*_REQUESTED`), rute `plugin0_order_*` (OKRUZENJE.md 14.8); Hosted Tokenization (iFrame) **nema** |
+| Checkout front kontroleri, return/landing, admin akcije na narudžbini | PrestaShop strana | **ima** za Hosted Checkout (tip Redirect): `controllers/front/payment.php` (`createSession` + redirect; Core `HostedCheckoutProxyInterface` zamenjen plugin klasom `Infrastructure\HostedCheckoutProxy`, zamka 32; `PaymentsProxyInterface` omotačem `Infrastructure\PaymentsProxy`, zamka 33), `controllers/front/return.php` (`updateOrderStatus`, `getPaymentOutcome`, po potrebi `startWaitingForOutcome`); **ima** admin akcije capture/refund/cancel: hook `displayAdminOrderMain` → `Order\PaymentManager` (`OrderAPI::orders()->getDetails`, `OperationValidator` pre `OrderAPI::capture\|refund\|cancel`, log `PaymentOperationEntity` sa Worldline ID-jem operacije iz odgovora, pa `CheckoutAPI::payment()->updateOrderStatus`; pri otvaranju panela `OperationLog::reconcileForOrder` redovima koji su još `pending` daje konačan ishod po operacijama iz `GET /payments/{id}/details`, jer Worldline capture i refund uvek prvo prihvati kao `*_REQUESTED`), rute `plugin0_order_*` (OKRUZENJE.md 14.8); Hosted Tokenization (iFrame) **nema** |
 | `brand.json` | `ActiveBrandProvider` | **ima** |
 | Tabela u bazi | `Installer::createTables` | **ima**: `plugin0_entity` sa 9 indeksnih kolona |
-| Admin strane | PrestaShop Symfony rute `config/routes.yml` | **ima**: Configuration (`/worldline/configuration`, nad `AdminAPI::connection()`), Payment methods (`/worldline/payment-methods`, `.../create`, `.../{id}/edit`, `.../{id}/active`, `.../{id}/delete`; metode iz demo projekta, `Logeecom\PaymentMethods` nad `Plugin0\Entity\PaymentMethodEntity` u `ps_plugin0_entity`, ne Core `AdminAPI::payment()`), Settings (`/worldline/settings`; demo `Logeecom\Settings` nad `ConfigEntity` ključevima `minLogLevel`, `defaultCurrency` i `rowsPerPage`), Logs (`/worldline/logs`, čita `ps_log`), `api_plugin0_core_info`; front: `controllers/front/payment.php` i hook `paymentOptions` (vidi OKRUZENJE.md 14) |
+| Admin strane | PrestaShop Symfony rute `config/routes.yml` | **ima**: Configuration (`/worldline/configuration`, nad `AdminAPI::connection()`), Payment methods (`/worldline/payment-methods`, `.../create`, `.../{id}/edit`, `.../{id}/active`, `.../{id}/delete`; metode iz demo projekta, `Logeecom\PaymentMethods` nad `Plugin0\Entity\PaymentMethodEntity` u `ps_plugin0_entity`, ne Core `AdminAPI::payment()`), Settings (`/worldline/settings`; demo `Logeecom\Settings` nad `ConfigEntity` ključevima `minLogLevel`, `defaultCurrency` i `rowsPerPage`, plus Payment action: Core `PaymentSettings` i plugin ključ `cardAuthorizationMode`), Logs (`/worldline/logs`, čita `ps_log`), `api_plugin0_core_info`, akcije panela na narudžbini (`/worldline/orders/{orderId}/capture`, `.../refund`, `.../cancel`); prava adresa admin rute ima prefiks `/modules` (PrestaShop `YamlModuleLoader`); front: `controllers/front/payment.php`, `controllers/front/return.php` i hook `paymentOptions` (vidi OKRUZENJE.md 14) |
 
 Redosled implementacije koji sledi iz zavisnosti: (1) `QueueItemRepository` + async endpoint (jer i Hosted Tokenization bez
 3DS i disconnect i svi periodični taskovi zavise od toga), (2) `ShopOrderService` + `CartProvider` + checkout/return kontroleri
@@ -851,9 +860,9 @@ i stranice Payment methods i Settings iz tog koraka već postoje (Settings od 20
 
 ## 9. Zamke i detalji koje treba znati
 
-1. **Logger šalje sve nivoe u `ShopLoggerAdapter`.** `minLogLevel` važi samo za default logger. Plugin0 `LoggerService` ne filtrira, pa `ps_log` dobija i DEBUG (uključujući svako čitanje repozitorijuma).
+1. **Logger šalje sve nivoe u `ShopLoggerAdapter`.** `minLogLevel` važi samo za default logger. Plugin0 `LoggerService` zato filtrira sam, po podešavanju Log level sa Settings stranice (`CoreLogLevel::isWritten`, `LoggerService::logMessage`); na default-u Info (dev prodavnica ima `_PS_MODE_DEV_ = false`) DEBUG zapisi, npr. svako čitanje repozitorijuma, ne stižu u `ps_log`. (Ranije je ovde pisalo da `LoggerService` ne filtrira; usklađeno 2026-10-16.)
 2. **`ActiveConnectionProvider` kešira konekciju za ceo proces.** Posle `saveConnection` u istom zahtevu, servisi koji su već dobili instancu vide staru konekciju. Isto važi za `ConnectionConfigRepository` koji je `SingleInstance`, ali on ne kešira, pa plugin0 čita svež `getConnectionConfig()` posle čuvanja bez problema; problem je samo za komponente koje drže `ActiveConnectionProvider`.
-3. **`StoreContext` mora biti postavljen** kad se zovu repozitorijumi direktno (van API fasada), inače `storeId` je `''`. Koristiti `StoreContext::doWithStore($storeId, fn)`. Plugin0 to radi u `disconnectActive()`.
+3. **`StoreContext` mora biti postavljen** kad se zovu repozitorijumi direktno (van API fasada), inače `storeId` je `''`. Koristiti `StoreContext::doWithStore($storeId, fn)`. Plugin0 to radi u `ConfigurationController::disconnectActive()` i `Order\PaymentManager::reconcileLog()`.
 4. **Filtriranje samo po indeksima.** `QueryFilter` po polju koje nije u `IndexMap`-u (ni `id`) mora da baci `QueryFilterInvalidParamException` u plugin repozitorijumu. `LIKE` samo za string, `IN` samo za array, `IS NULL` samo sa `null`.
 5. **Kastovanje indeksa** (`IndexHelper::castFieldValue`) mora isto da se primeni i na vrednosti filtera, inače poređenja brojeva kao stringova ne rade (npr. `captureAtTimestamp <= now`).
 6. **Core ignoriše povratne vrednosti `update()`/`delete()`** u svojim repozitorijumima; neuspeo upis ne baca izuzetak. Plugin0 `BaseRepository::save` baca `RuntimeException` pri neuspelom insertu, `update`/`delete` samo loguju.
