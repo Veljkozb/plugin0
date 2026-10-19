@@ -3,6 +3,8 @@
 namespace Plugin0\Infrastructure;
 
 use OnlinePayments\Sdk\Domain\CreateHostedCheckoutRequest;
+use Plugin0\Infrastructure\Sdk\HostedCheckoutClient as ReturnMacHostedCheckoutClient;
+use OnlinePayments\Sdk\Merchant\HostedCheckout\HostedCheckoutClient as SdkHostedCheckoutClient;
 use WOP\OnlinePayments\Core\Bootstrap\ApiFacades\PaymentProcessor\Proxies\Transformers\CreateHostedCheckoutRequestTransformer;
 use WOP\OnlinePayments\Core\Bootstrap\ApiFacades\PaymentProcessor\Proxies\Transformers\CreateHostedCheckoutResponseTransformer;
 use WOP\OnlinePayments\Core\Bootstrap\ApiFacades\PaymentProcessor\Proxies\Transformers\FeedbacksTransformer;
@@ -37,6 +39,8 @@ use WOP\OnlinePayments\Core\BusinessLogic\PaymentProcessor\Proxies\HostedCheckou
  *     brend, jer PRE_AUTHORIZATION zna samo kroz konfiguraciju metode `cards`;
  *  2. uskladi mobile i redirect deo sa kartičnim authorizationMode-om, onako kako Core sam radi za proizvode sa
  *     odvojenim capture-om (grupa cards, Google Pay, PayPal...).
+ * Posle slanja odgovor čita kroz Infrastructure\Sdk\HostedCheckoutClient, koji prihvata i polje returnmac malim slovima
+ * (Worldline preprod od 2026-10-19); bez toga Core sačuva prazan returnHmac i povratak kupca ne nalazi transakciju.
  * Core se ne menja.
  */
 class HostedCheckoutProxy implements HostedCheckoutProxyInterface
@@ -78,9 +82,11 @@ class HostedCheckoutProxy implements HostedCheckoutProxyInterface
             $hostedCheckoutRequest->setFeedbacks($feedbacks);
         }
 
-        return CreateHostedCheckoutResponseTransformer::transform(
-            $this->clientFactory->get()->hostedCheckout()->createHostedCheckout($hostedCheckoutRequest)
-        );
+        // Plugin0 klijent oko SDK-ovog: odgovor čita i returnmac (mala slova), vidi Infrastructure\Sdk\CreateHostedCheckoutResponse.
+        $sdkClient = $this->clientFactory->get()->hostedCheckout();
+        $client = $sdkClient instanceof SdkHostedCheckoutClient ? new ReturnMacHostedCheckoutClient($sdkClient) : $sdkClient;
+
+        return CreateHostedCheckoutResponseTransformer::transform($client->createHostedCheckout($hostedCheckoutRequest));
     }
 
     /**

@@ -2259,6 +2259,13 @@ Worldline.
 Primer prave adrese (Apache access log 2026-10-16):
 `GET /en/module/plugin0/return?RETURNMAC=c625807e-85e0-4a80-9af9-dbf33991f061&hostedCheckoutId=10300628270`.
 
+**Pazi (2026-10-19):** Worldline preprod je u odgovoru na `POST /hostedcheckouts` polje preimenovao u `returnmac`
+(malim slovima), a SDK `CreateHostedCheckoutResponse` mapira samo `RETURNMAC`, pa Core sačuva prazan `returnHmac`.
+Povratak sa `RETURNMAC=...` u adresi tada ne nalazi transakciju (korpa 18, plaćanje 10300867120, ps_log 1524) i kupac
+vidi "nije potvrđeno". Popravljeno istog dana u pluginu: `Infrastructure\HostedCheckoutProxy` odgovor čita kroz
+`Infrastructure\Sdk\HostedCheckoutClient` i `Infrastructure\Sdk\CreateHostedCheckoutResponse`, koji prihvata oba oblika.
+Plaćanja započeta pre popravke (korpa 18 / narudžbina #18) i dalje imaju prazan `returnHmac`.
+
 ### 18.2 Koraci
 
 `Plugin0ReturnModuleFrontController::postProcess()`, `/home/veljkozbiljic/logeecom/plugin0/controllers/front/return.php:50-122`:
@@ -2475,6 +2482,12 @@ grep -rn "validateOrder\|changeIdOrderState\|setCurrentState" /home/veljkozbilji
 
 Očekivano: pogoci samo u `/home/veljkozbiljic/logeecom/plugin0/src/Infrastructure/ShopOrderService.php` (i reč
 `validateOrder` u komentarima drugih fajlova).
+
+**Webhook (od 2026-10-19):** isti `StatusUpdateService::updateOrderStatus` zove i Core `WebhookService` kad Worldline
+pošalje događaj na `controllers/front/webhook.php`, pa narudžbina nastaje ili menja status i bez kupca i bez admin
+panela. Plugin oko toga dodaje: zaključavanje po transakciji (`Infrastructure\StatusUpdateService`), preskakanje već
+obrađenog događaja (`Webhook\WebhookService`, evidencija `Entity\WebhookEventEntity`) i prepoznavanje greške
+potpisa (`Infrastructure\WebhookTransformer`). Ceo tok i razlozi: `docs/WEBHOOK.md`.
 
 ### 19.4 Koji Worldline status daje koji status narudžbine
 
@@ -3565,7 +3578,7 @@ izostala), izlazni kod 0, a u `ps_log` nije nastao nijedan nov red (Log level In
 
 | # | Šta fali | Posledica danas | Šta bi trebalo (Core deo koji to radi) |
 |---|---|---|---|
-| 1 | **webhook**: front controller `webhook` ne postoji | promene napravljene u Merchant Portal-u (refund, capture) ne stižu u PrestaShop dok neko ne otvori panel narudžbine; kupac koji plati i zatvori browser pre povratka ostaje bez narudžbine; Configuration stranica prikazuje Webhook URL koji ne radi (12.2) | `/home/veljkozbiljic/logeecom/plugin0/controllers/front/webhook.php` koji zove `WebhookAPI::get()->webhooks($storeId)->process($telo, $zaglavlja)` i vraća 200 ili 400 (CORE.md 7.6); po beleškama to je sledeći tiket (**iz beleški**) |
+| 1 | **webhook**: urađen 2026-10-19 (`/home/veljkozbiljic/logeecom/plugin0/controllers/front/webhook.php`, `src/Webhook/*`, `src/Infrastructure/WebhookTransformer.php`, `src/Infrastructure/StatusUpdateService.php`, `src/Entity/WebhookEventEntity.php`; ceo opis u `docs/WEBHOOK.md`) | ostaje: prijava adrese u Merchant Portal-u (Developer > Webhooks) i prva prava isporuka od Worldline-a; bez toga promene iz portala i dalje ne stižu same | prijava adrese sa Configuration stranice (12.2) u portal; posle toga provera po `docs/WEBHOOK.md`, sekcija 7 |
 | 2 | **red zadataka**: nema repozitorijuma za `QueueItem` ni front controller-a `asyncprocess` (`Plugin0\Configuration::getAsyncProcessUrl()` ga ipak imenuje, `/home/veljkozbiljic/logeecom/plugin0/src/Configuration.php:57`) | ne rade Core pozadinski poslovi: provera statusa kad webhook ne stigne (`TransactionStatusCheckTask`), automatski capture, čišćenje završenih zadataka, brisanje isteklih `MonitoringLog` redova, Core disconnect | `QueueItemRepository` registrovan za `QueueItem` + `asyncprocess` koji zove `AsyncProcessService::runProcess($guid)` (CORE.md 4.9, 7.9) |
 | 3 | metode tipa **iFrame** (Worldline Hosted Tokenization) | ne nude se na checkout-u (16.2, uslov 2) | `CheckoutAPI::hostedTokenization()`; pazi, Core metoda se zove `crate`, sa greškom u imenu (CORE.md, zamka 12) |
 | 4 | proizvodi sa odvojenim capture-om (Apple Pay, Google Pay, PayPal, grupa `cards`...) | ne nude se (16.2, uslov 4) | Core konfiguracija metode (`PaymentMethodConfigEntity`) za te proizvode |
@@ -3609,6 +3622,9 @@ poglavlje 9.
 | 18 | Core Logger šalje sve nivoe pluginu; filtriranje radi `LoggerService` | 10.3 |
 | 19 | tajne zavise od `_NEW_COOKIE_KEY_`; neuspelo dešifrovanje daje `''` | 6.3 |
 | 20 | JSON ključ `cratedAt` u `PaymentTransactionEntity` je slovna greška Core-a, ali deo formata podataka: ne "popravljaj" | CORE.md, zamka 21 |
+| 21 | Core webhook put ne nosi ID događaja, greške potpisa vraća kao `general.unhandled`, a događaj bez objekta plaćanja obara na `PaymentId::parse('')`; plugin to rešava omotačem i podklasom (`docs/WEBHOOK.md`, 2.2-2.4) | CORE.md, zamka 34 |
+| 22 | Core čita Worldline pre zaključavanja korpe, pa povratak kupca i webhook mogu da primene zastareli snimak; plugin zaključava `updateOrderStatus` po transakciji (`Infrastructure\StatusUpdateService`) | `docs/WEBHOOK.md`, 4 |
+| 23 | Worldline preprod od 2026-10-19 vraća `returnmac` malim slovima, SDK čita samo `RETURNMAC`, pa povratak kupca završava sa "nije potvrđeno" (korpa 18); popravljeno u pluginu (`Infrastructure\Sdk\*`) | CORE.md, zamka 35; 18.1 |
 
 ### 33.2 PrestaShop
 
@@ -3622,6 +3638,7 @@ poglavlje 9.
 | 6 | GET forma zamenjuje query string, pa `_token` mora u skriveno polje | 13.4, 15 |
 | 7 | `bin/console` i skripte ne okidaju `actionDispatcherBefore`; pozovi `Bootstrap::boot()` sam | 5.4, 31.4 |
 | 8 | Uninstall briše `ps_plugin0_entity` sa svim podacima | 4.2 |
+| 9 | front controller bez `FrontController::init()` nema Symfony container, pa `validateOrder` puca na `Tools::getContextLocale` posle upisa narudžbine (polu-napravljena narudžbina 17, 2026-10-19); webhook kontroler zato zove `Controller::init()` | `docs/WEBHOOK.md`, 2.6 |
 | 9 | `Order::getHistory()` i `Cart::orderExists()` keširaju do kraja zahteva | 19.3 |
 | 10 | prelazak u status sa `paid = 1` upiše uplatu za ceo iznos fakture | 20.9 |
 | 11 | `prepend-autoloader: false`, inače sukob verzija paketa u Module Manager-u | 4.1 |
@@ -3760,11 +3777,11 @@ svim redovima, a jedini neescape-ovan `|` u code span-u tabele (`CORE.md`, pogla
 | Checkout Hosted Checkout (MIDU-1221) | gotovo, samo tip Redirect | browser 2026-10-15 (**iz beleški**), baza, Apache log | plaćanje koje ostane "u obradi" duže od čekanja |
 | Panel na narudžbini (MIDU-1224) | gotovo, commit `06a7b91` | 52 testa `Order`, baza (narudžbina 16), browser (**iz beleški**) | — |
 | `HostedCheckoutProxy`, `PaymentsProxy` | gotovo | 17 + 9 testova; baza (narudžbina 16) | ponašanje na Live okruženju |
-| Unit testovi | 169 pokretanja, 460 provera, svi prolaze | pokrenuti 2026-10-16 | — |
+| Unit testovi | 195 pokretanja, 525 provera, svi prolaze | pokrenuti 2026-10-19 | — |
 | LF krajevi linija | svi praćeni fajlovi LF | `git ls-files --eol` 2026-10-16 | — |
 | `/home/veljkozbiljic/logeecom/plugin0/lib/Logeecom` = demo `/home/veljkozbiljic/laravel-docker/src` | identično | `diff -rq` 2026-10-16 | — |
 | Core i SDK netaknuti | po beleškama identični originalu (2026-10-15) | `diff -rq` sa zip-om commit-a (**iz beleški**) | danas nije ponovljeno (traži internet) |
-| Webhook | ne postoji | — | — |
+| Webhook (tiket MIDU-1227) | kod gotov 2026-10-19, nije commit-ovan; adresa radi kroz ngrok | 26 unit testova; curl sa pravim HMAC-om (potpis, duplikat, zaključavanje, čišćenje), `docs/WEBHOOK.md` 7 | prijava adrese u Merchant Portal-u i prva prava Worldline isporuka; narudžbina iz webhook-a za svežu korpu (korpa 18 ima polu-napravljenu narudžbinu 17 iz probe pre popravke) |
 | Red zadataka i `asyncprocess` | ne postoje | — | — |
 | iFrame (Hosted Tokenization) | ne postoji | — | — |
 | Core debug mode | **uključen** u dev prodavnici; 287 `MonitoringLog` redova; nema automatskog brisanja | baza 2026-10-16 | — |
@@ -3780,7 +3797,8 @@ plugin0 je PrestaShop modul koji Worldline plaćanje radi preko Logeecom Core-a:
 zove Core, Core zove Worldline, a sve što Core treba od prodavnice dobija preko klasa plugina iz tabele 6.2. Metode plaćanja i podešavanja su demo projekat preslikan bez izmene, a čuvaju se kroz Core u jednoj
 tabeli plugina. Narudžbina nastaje tek posle potvrđenog plaćanja i njen status menja samo `ShopOrderService`.
 Dve Worldline/Core nezgode (protivrečni režimi autorizacije i čitanje samo rezervacije `_0`) su zaobiđene u
-pluginu, bez diranja Core-a. Najveća praznina je izostanak webhook-a i reda zadataka.
+pluginu, bez diranja Core-a. Webhook je dodat 2026-10-19 (`docs/WEBHOOK.md`); najveća preostala praznina je red
+zadataka (pozadinska provera statusa i automatski capture).
 
 ### 36.3 Sledeći korak
 
@@ -3795,4 +3813,5 @@ Posle toga, po tvom izboru:
    (Core metoda `saveLogSettings`, `/home/veljkozbiljic/logeecom/plugin0/vendor/wl-online-payments-direct/plugin-core-base/src/BusinessLogic/AdminConfig/ApiFacades/GeneralSettingsAPI/Controller/GeneralSettingsController.php:69`;
    ovaj poziv danas nisam pokretao, **neprovereno**).
 2. Ispravi šest zastarelih komentara u kodu (34.1); dokumenti su već usklađeni (34.2-34.3).
-3. Sledeći tiket po beleškama: webhook (32, red 1).
+3. Webhook: prijavi adresu u Merchant Portal-u i prođi `docs/WEBHOOK.md`, sekciju 7; posle toga odluči o
+   (popravka za `returnmac` je urađena, zamka 33.1/23).

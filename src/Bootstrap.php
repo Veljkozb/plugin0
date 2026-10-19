@@ -53,6 +53,23 @@ use WOP\OnlinePayments\Core\Bootstrap\SingleInstance;
 use WOP\OnlinePayments\Core\Bootstrap\Sdk\MerchantClientFactory;
 use WOP\OnlinePayments\Core\BusinessLogic\PaymentProcessor\Proxies\HostedCheckoutProxyInterface;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\Integration\ShopOrderService as ShopOrderServiceInterface;
+use Plugin0\Infrastructure\WebhookTransformer;
+use WOP\OnlinePayments\Core\Bootstrap\Sdk\WebhookTransformer as CoreWebhookTransformer;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\Connection\ActiveConnectionProvider;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\Webhook\Transformers\WebhookTransformerInterface;
+use Plugin0\Entity\WebhookEventEntity;
+use Plugin0\Webhook\ProcessedEvents;
+use Plugin0\Webhook\WebhookService;
+use WOP\OnlinePayments\Core\BusinessLogic\PaymentProcessor\Services\Webhooks\WebhookService as CoreWebhookService;
+use WOP\OnlinePayments\Core\BusinessLogic\PaymentProcessor\Services\Payment\StatusUpdateService as CoreStatusUpdateService;
+use Plugin0\Infrastructure\StatusUpdateService;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\HostedTokenization\Repositories\TokensRepositoryInterface;
+use WOP\OnlinePayments\Core\BusinessLogic\PaymentProcessor\Proxies\HostedTokenizationProxyInterface;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\Time\TimeProviderInterface;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\OrderStatusMapping\StatusMappingService;
+use WOP\OnlinePayments\Core\BusinessLogic\AdminConfig\Services\GeneralSettings\Repositories\PaymentSettingsRepositoryInterface;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\Payment\Repositories\PaymentTransactionRepositoryInterface;
+use WOP\OnlinePayments\Core\BusinessLogic\PaymentProcessor\Services\PaymentLinks\PaymentLinkTransactionService;
 
 class Bootstrap extends BootstrapComponent
 {
@@ -123,6 +140,45 @@ class Bootstrap extends BootstrapComponent
         ServiceRegister::registerService(ShopOrderServiceInterface::class, static function () {
             return new ShopOrderService();
         });
+
+        // Omotač oko Core WebhookTransformer-a (Core ga registruje u parent::initServices, bez SingleInstance; ovde se
+        // ista registracija prepisuje, poslednja važi). SDK greške potpisa i nečitljivog tela pretvara u plugin
+        // izuzetke sa errorCode-om po kome front controller webhook zna da odgovori 200. Vidi Infrastructure\WebhookTransformer.
+        ServiceRegister::registerService(WebhookTransformerInterface::class, static function () {
+            return new WebhookTransformer(
+                new CoreWebhookTransformer(ServiceRegister::getService(ActiveConnectionProvider::class)),
+                ServiceRegister::getService(ActiveConnectionProvider::class)
+            );
+        });
+
+        // Podklasa Core WebhookService-a (Core ga registruje u parent::initServices kao SingleInstance; ovde se
+        // prepisuje pod istim ključem): već obrađen događaj (Webhook\ProcessedEvents, tip WebhookEvent) preskače bez
+        // Worldline poziva, a nov beleži tek posle uspešne obrade. Vidi Webhook\WebhookService.
+        ServiceRegister::registerService(CoreWebhookService::class, new SingleInstance(static function () {
+            return new WebhookService(
+                ServiceRegister::getService(CoreStatusUpdateService::class),
+                ServiceRegister::getService(PaymentTransactionRepositoryInterface::class),
+                ServiceRegister::getService(PaymentLinkTransactionService::class),
+                new ProcessedEvents()
+            );
+        }));
+
+        // Podklasa Core StatusUpdateService-a (Core ga registruje u parent::initServices kao SingleInstance; ovde se
+        // prepisuje pod istim ključem, sa istih osam zavisnosti): updateOrderStatus, čitanje Worldline-a i promena
+        // narudžbine zajedno, drži pod MySQL GET_LOCK po ID-ju transakcije, da povratak kupca, webhook i admin panel ne
+        // primene zastareli snimak jedan preko drugog. Vidi Infrastructure\StatusUpdateService.
+        ServiceRegister::registerService(CoreStatusUpdateService::class, new SingleInstance(static function () {
+            return new StatusUpdateService(
+                ServiceRegister::getService(PaymentTransactionRepositoryInterface::class),
+                ServiceRegister::getService(PaymentsProxyInterface::class),
+                ServiceRegister::getService(TokensRepositoryInterface::class),
+                ServiceRegister::getService(HostedTokenizationProxyInterface::class),
+                ServiceRegister::getService(TimeProviderInterface::class),
+                ServiceRegister::getService(ShopOrderServiceInterface::class),
+                ServiceRegister::getService(StatusMappingService::class),
+                ServiceRegister::getService(PaymentSettingsRepositoryInterface::class)
+            );
+        }));
     }
 
     /**
@@ -178,10 +234,12 @@ class Bootstrap extends BootstrapComponent
             PaymentTransactionLockEntity::class,
             ProductTypeEntity::class,
             TokenEntity::class,
-            // Entiteti koji nisu Core-ovi: metoda plaćanja iz demo projekta (Entity\PaymentMethodEntity) i log
-            // capture/refund/cancel pokušaja sa admin stranice narudžbine (Entity\PaymentOperationEntity).
+            // Entiteti koji nisu Core-ovi: metoda plaćanja iz demo projekta (Entity\PaymentMethodEntity), log
+            // capture/refund/cancel pokušaja sa admin stranice narudžbine (Entity\PaymentOperationEntity) i evidencija
+            // obrađenih webhook događaja (Entity\WebhookEventEntity).
             PaymentMethodEntity::class,
             PaymentOperationEntity::class,
+            WebhookEventEntity::class,
         ];
 
         foreach ($entities as $entityClass) {

@@ -989,9 +989,9 @@ plugin0 ima dva front controller-a, opisana u 14.7:
 - `return`: `GET https://8-2-4.prestashop.veljko.ngrok.app/en/module/plugin0/return?RETURNMAC=...&hostedCheckoutId=...`
   (povratak kupca sa Worldline strane).
 
-Oba oblika adrese su videna u Apache access logu 2026-10-15 i 2026-10-16. Front controller-i `asyncprocess` i
-`webhook` jos ne postoje, iako `Configuration::getAsyncProcessUrl()` i Configuration stranica (polje Webhook URL)
-vec prave linkove na njih preko `getModuleLink`.
+Oba oblika adrese su videna u Apache access logu 2026-10-15 i 2026-10-16. Front controller `webhook` postoji od
+2026-10-19 (`controllers/front/webhook.php`, adresa sa Configuration stranice, samo POST; opis u docs/WEBHOOK.md);
+`asyncprocess` jos ne postoji, iako `Configuration::getAsyncProcessUrl()` vec pravi link preko `getModuleLink`.
 
 ### 13.3 Primer upisa u bazu: cuvanje Worldline konekcije
 
@@ -1243,8 +1243,9 @@ Tiket MIDU-1221. Placanje vodi Core (`CheckoutAPI`); plugin povezuje PrestaShop 
 - PrestaShop dozvoljava jednu narudzbinu po korpi (`PaymentModule::validateOrder` odbija korpu sa narudzbinom).
   Narudzbina pre placanja bi za svaki otkazan pokusaj ostavila otkazanu narudzbinu, skidala i vracala zalihe, slala
   mejlove i trazila novu korpu za novi pokusaj. Ovako otkazan ili odbijen pokusaj ne ostavlja nista, a korpa ostaje.
-- Cena: ako kupac plati i zatvori browser pre povratka, narudzbina ne nastaje dok neko ne pozove `updateOrderStatus`
-  (webhook ili `TransactionStatusCheckTask`; nijedno jos nije povezano).
+- Cena: ako kupac plati i zatvori browser pre povratka, narudzbina ne nastaje dok neko ne pozove `updateOrderStatus`.
+  Od 2026-10-19 to radi webhook (`controllers/front/webhook.php` -> `WebhookAPI` -> `StatusUpdateService` ->
+  `ShopOrderService::createShopOrder`, docs/WEBHOOK.md); `TransactionStatusCheckTask` i dalje nije povezan (nema reda zadataka).
 
 **Bezbednost povratka:** adresa `return` je javna. Core transakciju trazi po paru payment ID + RETURNMAC
 (`PaymentTransactionRepository::get`), a status uvek cita od Worldline-a, nikad iz URL-a. Prazan RETURNMAC plugin
@@ -1286,7 +1287,7 @@ dobija iznos koji je Worldline naplatio.
 
 **Sta nije pokriveno:**
 - metode tipa iFrame (Hosted Tokenization) se ne nude na checkout-u;
-- webhook i provera u pozadini (narudzbina kad kupac ne dodje do `return`);
+- provera u pozadini (`TransactionStatusCheckTask`, red zadataka); webhook je pokriven od 2026-10-19 (docs/WEBHOOK.md);
 - sandbox nalog `logeecom35` nudi proizvode samo u EUR, GBP i CHF (`GET /products` 2026-10-14, iznos 2300: FR/EUR,
   RS/EUR, GB/GBP i CH/CHF po 12 proizvoda, medju njima 1 = Visa, ali ne 302 = Apple Pay; 0 za RSD, BZD, INR, MXN,
   USD, PLN, DKK, SEK, CZK, HUF, CAD, AUD i JPY, i za FR/RSD), pa placanje u valutama dev prodavnice vraca
