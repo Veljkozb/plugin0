@@ -7,8 +7,12 @@
   Četvrto polje, Payment action, nije iz dema: Core podešavanje da li Worldline naplati odmah (SALE) ili samo
   rezerviše iznos (FINAL_AUTHORIZATION), pa se capture ili cancel radi sa stranice narudžbine.
 
-  Kontroler šalje: form (log_level, default_currency, rows_per_page, payment_action), errors (poruka po polju),
-  levels (value, label, effect), currencies (kod => naziv), min_rows, max_rows, payment_actions (vrednost => tekst).
+  Peto i šesto polje su iz tiketa za pozadinsku obradu (docs/BACKGROUND.md, 6.1): Auto capture (checkbox; skriveno
+  polje istog imena ispred njega pošalje 0 kad nije označen) i Log retention (1, 2, 7 ili 14 dana).
+
+  Kontroler šalje: form (log_level, default_currency, rows_per_page, payment_action, auto_capture '1'/'0',
+  log_retention), errors (poruka po polju), levels (value, label, effect), currencies (kod => naziv), min_rows,
+  max_rows, payment_actions (vrednost => tekst), auto_capture_delay (minuti), log_retention_choices (broj dana).
 #}
 {% extends '@Modules/plugin0/views/templates/admin/layout.html.twig' %}
 
@@ -80,6 +84,33 @@
                         {% endif %}
                         <small class="form-text text-muted">Applies to new payments. With "Authorize only" the order page offers capture and cancel; a charged payment can only be refunded. Final authorization must be captured in full within 7 days; pre-authorization allows partial captures and cancellations within 30 days.</small>
                     </div>
+
+                    <div class="form-group">
+                        <label class="d-block">Auto capture</label>
+                        <div class="form-check">
+                            <input type="hidden" name="auto_capture" value="0">
+                            <input type="checkbox" class="form-check-input{{ errors.auto_capture is defined ? ' is-invalid' }}"
+                                   id="auto_capture" name="auto_capture" value="1" {{ form.auto_capture == '1' ? 'checked' }}>
+                            <label class="form-check-label" for="auto_capture">Capture authorized payments automatically</label>
+                            {% if errors.auto_capture is defined %}
+                            <div class="invalid-feedback">{{ errors.auto_capture }}</div>
+                            {% endif %}
+                        </div>
+                        <small class="form-text text-muted">Works with "Authorize only". A payment authorized while this is on is captured in full by a background task about {{ auto_capture_delay }} minutes after the authorization (the task checks every 15 minutes). Turning it off stops every automatic capture that has not run yet. A failed capture is retried and, if it still fails, shown in the payment panel of the order.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="log_retention">Log retention</label>
+                        <select class="form-control{{ errors.log_retention is defined ? ' is-invalid' }}" id="log_retention" name="log_retention" style="max-width: 10rem;">
+                            {% for days in log_retention_choices %}
+                            <option value="{{ days }}" {{ form.log_retention == days ? 'selected' }}>{{ days }} {{ days == 1 ? 'day' : 'days' }}</option>
+                            {% endfor %}
+                        </select>
+                        {% if errors.log_retention is defined %}
+                        <div class="invalid-feedback">{{ errors.log_retention }}</div>
+                        {% endif %}
+                        <small class="form-text text-muted">A background task deletes older entries once a day: the Worldline lines in Logs, and the Worldline request and webhook records. A change applies from the next run.</small>
+                    </div>
                 </div>
 
                 <div class="card-footer d-flex justify-content-between">
@@ -108,8 +139,17 @@
         var currency = document.getElementById('default_currency');
         var rows = document.getElementById('rows_per_page');
         var paymentAction = document.getElementById('payment_action');
+        var autoCapture = document.getElementById('auto_capture');
+        var logRetention = document.getElementById('log_retention');
         var saveButton = document.getElementById('plugin0_save_button');
-        var initial = { level: select.value, currency: currency ? currency.value : '', rows: rows.value, paymentAction: paymentAction.value };
+        var initial = {
+            level: select.value,
+            currency: currency ? currency.value : '',
+            rows: rows.value,
+            paymentAction: paymentAction.value,
+            autoCapture: autoCapture.checked,
+            logRetention: logRetention.value
+        };
 
         function showEffect() {
             var option = select.options[select.selectedIndex];
@@ -121,7 +161,9 @@
             saveButton.disabled = select.value === initial.level
                 && (currency ? currency.value : '') === initial.currency
                 && rows.value === initial.rows
-                && paymentAction.value === initial.paymentAction;
+                && paymentAction.value === initial.paymentAction
+                && autoCapture.checked === initial.autoCapture
+                && logRetention.value === initial.logRetention;
         }
 
         select.addEventListener('change', function () {
@@ -133,6 +175,8 @@
         }
         rows.addEventListener('input', showDirty);
         paymentAction.addEventListener('change', showDirty);
+        autoCapture.addEventListener('change', showDirty);
+        logRetention.addEventListener('change', showDirty);
         // Browser posle osvežavanja može da vrati stari izbor u polja; uskladi prikaz sa njim.
         showEffect();
         showDirty();
@@ -140,7 +184,8 @@
         // Potvrda pre Restore defaults, rečima demo RestoreDialog-a.
         document.getElementById('plugin0_restore_form').addEventListener('submit', function (event) {
             var question = 'Restore every setting to its default?\n\n'
-                + 'The log level, the default currency, the rows per page and the payment action all go back to their defaults, '
+                + 'The log level, the default currency, the rows per page, the payment action, auto capture (off) '
+                + 'and the log retention (14 days) all go back to their defaults, '
                 + 'and what is saved now is lost.';
             if (!window.confirm(question)) {
                 event.preventDefault();

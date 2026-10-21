@@ -2,8 +2,6 @@
 
 namespace Plugin0\Infrastructure;
 
-use Db;
-use RuntimeException;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\Payment\PaymentId;
 use WOP\OnlinePayments\Core\BusinessLogic\PaymentProcessor\Services\Payment\StatusUpdateService as CoreStatusUpdateService;
 
@@ -33,27 +31,11 @@ use WOP\OnlinePayments\Core\BusinessLogic\PaymentProcessor\Services\Payment\Stat
  */
 class StatusUpdateService extends CoreStatusUpdateService
 {
-    private const LOCK_TIMEOUT_SECONDS = 10;
-
     public function updateOrderStatus(PaymentId $paymentId, ?string $returnHmac = null): void
     {
-        $db = Db::getInstance();
-        $transactionId = $paymentId->getTransactionId();
-        // Ime važi za ceo MySQL server, pa sadrži i ime baze; MySQL ga ograničava na 64 znaka.
-        $lockName = pSQL(substr('plugin0_tx_' . $transactionId . '_' . _DB_NAME_, 0, 64));
-
-        if ((int) $db->getValue("SELECT GET_LOCK('" . $lockName . "', " . self::LOCK_TIMEOUT_SECONDS . ')', false) !== 1) {
-            throw new RuntimeException(sprintf(
-                'Payment status lock for transaction %s not acquired within %d s.',
-                $transactionId,
-                self::LOCK_TIMEOUT_SECONDS
-            ));
-        }
-
-        try {
+        // Isto zaključavanje drži i automatska naplata (TransactionLock, BackgroundProcessing\AutoCapture).
+        TransactionLock::run($paymentId->getTransactionId(), function () use ($paymentId, $returnHmac): void {
             parent::updateOrderStatus($paymentId, $returnHmac);
-        } finally {
-            $db->getValue("SELECT RELEASE_LOCK('" . $lockName . "')", false);
-        }
+        });
     }
 }

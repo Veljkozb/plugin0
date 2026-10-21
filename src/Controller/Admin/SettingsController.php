@@ -6,6 +6,8 @@ use InvalidArgumentException;
 use Logeecom\Settings\Domain\LogLevel;
 use Logeecom\Settings\Domain\Settings;
 use Logeecom\Settings\Service\SettingsService;
+use Plugin0\BackgroundProcessing\AutoCapture\AutoCaptureSetting;
+use Plugin0\BackgroundProcessing\LogCleanup\LogRetentionSetting;
 use Plugin0\Bootstrap;
 use Plugin0\Infrastructure\PaymentActionSetting;
 use Plugin0\Infrastructure\ShopCountriesAndCurrencies;
@@ -27,6 +29,11 @@ use Throwable;
  * Četvrto polje, Payment action, nije iz dema: to su Core-ova PaymentSettings aktivne konekcije
  * (Infrastructure\PaymentActionSetting), potrebna da bi plaćanje ostalo samo autorizovano, pa se naplatilo ili
  * otkazalo sa stranice narudžbine. Čuva se posle demo podešavanja i vraća na Core default (SALE) uz Restore.
+ *
+ * Peto i šesto polje su iz tiketa za pozadinsku obradu (docs/BACKGROUND.md, 6.1), takođe Core podešavanja: Auto
+ * capture (BackgroundProcessing\AutoCapture\AutoCaptureSetting, Core PaymentSettings.automaticCapture, default
+ * isključeno) i Log retention (BackgroundProcessing\LogCleanup\LogRetentionSetting, Core LogSettings, default 14 dana).
+ * Čuvaju se posle Payment action-a, Restore ih vraća na default, a svaka promena se upiše u log.
  */
 class SettingsController extends ConnectedController
 {
@@ -50,6 +57,8 @@ class SettingsController extends ConnectedController
             try {
                 $service->restoreDefaults($this->employeeId());
                 PaymentActionSetting::save($this->storeId(), PaymentActionSetting::SALE);
+                AutoCaptureSetting::save($this->storeId(), false, $this->employeeId());
+                LogRetentionSetting::save($this->storeId(), LogRetentionSetting::DEFAULT_DAYS, $this->employeeId());
                 $this->addFlash('success', 'Every setting is back at its default.');
             } catch (Throwable $e) {
                 $this->addFlash('error', 'Settings could not be restored. ' . $e->getMessage());
@@ -63,6 +72,9 @@ class SettingsController extends ConnectedController
             'default_currency' => trim(self::scalar($request->request->get('default_currency'))),
             'rows_per_page' => trim(self::scalar($request->request->get('rows_per_page'))),
             'payment_action' => trim(self::scalar($request->request->get('payment_action'))),
+            // Neoznačen checkbox se ne šalje; skriveno polje istog imena ispred njega tada pošalje 0.
+            'auto_capture' => trim(self::scalar($request->request->get('auto_capture'))),
+            'log_retention' => trim(self::scalar($request->request->get('log_retention'))),
         ];
         $errors = $this->validate($service, $submitted);
         if ($errors !== []) {
@@ -79,6 +91,8 @@ class SettingsController extends ConnectedController
                 $this->employeeId()
             );
             PaymentActionSetting::save($this->storeId(), $submitted['payment_action']);
+            AutoCaptureSetting::save($this->storeId(), $submitted['auto_capture'] === '1', $this->employeeId());
+            LogRetentionSetting::save($this->storeId(), (int) $submitted['log_retention'], $this->employeeId());
             $this->addFlash('success', 'Settings saved.');
         } catch (InvalidArgumentException $e) {
             // Servis je odbio valutu (katalog se promenio između prikaza i čuvanja): poruka ispod polja, ništa nije upisano.
@@ -129,11 +143,19 @@ class SettingsController extends ConnectedController
             $errors['payment_action'] = 'The payment action must be SALE, FINAL_AUTHORIZATION or PRE_AUTHORIZATION.';
         }
 
+        if (!in_array($submitted['auto_capture'], ['0', '1'], true)) {
+            $errors['auto_capture'] = 'Auto capture must be on or off.';
+        }
+
+        if (preg_match('/^\d+$/', $submitted['log_retention']) !== 1 || !LogRetentionSetting::isValid((int) $submitted['log_retention'])) {
+            $errors['log_retention'] = sprintf('The log retention must be %s days.', implode(', ', LogRetentionSetting::CHOICES));
+        }
+
         return $errors;
     }
 
     /**
-     * @param array{log_level: string, default_currency: string, rows_per_page: string|int, payment_action: string} $form vrednosti polja
+     * @param array{log_level: string, default_currency: string, rows_per_page: string|int, payment_action: string, auto_capture: string, log_retention: string|int} $form vrednosti polja
      * @param array<string, string> $errors poruka po polju
      */
     private function renderForm(SettingsService $service, array $form, array $errors): Response
@@ -154,11 +176,13 @@ class SettingsController extends ConnectedController
             'min_rows' => Settings::MIN_ROWS_PER_PAGE,
             'max_rows' => Settings::MAX_ROWS_PER_PAGE,
             'payment_actions' => PaymentActionSetting::CHOICES,
+            'auto_capture_delay' => AutoCaptureSetting::DELAY_MINUTES,
+            'log_retention_choices' => LogRetentionSetting::choicesWith((int) $form['log_retention']),
         ]);
     }
 
     /**
-     * @return array{log_level: string, default_currency: string, rows_per_page: int, payment_action: string}
+     * @return array{log_level: string, default_currency: string, rows_per_page: int, payment_action: string, auto_capture: string, log_retention: int}
      */
     private function values(Settings $settings): array
     {
@@ -169,11 +193,22 @@ class SettingsController extends ConnectedController
             $paymentAction = PaymentActionSetting::SALE;
         }
 
+        try {
+            $autoCapture = AutoCaptureSetting::current($this->storeId());
+            $logRetention = LogRetentionSetting::current($this->storeId());
+        } catch (Throwable $e) {
+            $this->addFlash('error', 'Auto capture and log retention could not be read from Core. ' . $e->getMessage());
+            $autoCapture = false;
+            $logRetention = LogRetentionSetting::DEFAULT_DAYS;
+        }
+
         return [
             'log_level' => $settings->logLevel->value,
             'default_currency' => $settings->defaultCurrency ?? '',
             'rows_per_page' => $settings->rowsPerPage,
             'payment_action' => $paymentAction,
+            'auto_capture' => $autoCapture ? '1' : '0',
+            'log_retention' => $logRetention,
         ];
     }
 

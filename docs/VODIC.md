@@ -12,7 +12,8 @@ interfejsi su ti važni, kako teku podaci od klika do baze i nazad, i kako se sv
 - Pročitani su Core i PrestaShop fajlovi koji se u tekstu navode sa brojem linije.
 - Baza `prestashop` u kontejneru `logeecom_dev` je pregledana samo čitanjem (SELECT), a Apache access log samo
   pretragom.
-- Unit testovi su pokrenuti: **169 testova, 460 provera, svi prolaze** (PHPUnit 11.5.57, PHP 8.2.25 u kontejneru).
+- Unit testovi su pokrenuti: **169 testova, 460 provera, svi prolaze** (PHPUnit 11.5.57, PHP 8.2.25 u kontejneru);
+  posle pozadinske obrade 2026-10-20 (poglavlje 21a): **227 testova, 635 provera, svi prolaze**.
 - Dopunjeno istog dana: za sve četiri admin stranice i panel na narudžbini šta nam znače, kako smo ih pravili i kako
   su napravljene u kodu, sloj po sloj, sa šablonima (11.1, 11.2, 12.7-12.10, 13.10-13.14, 14.7-14.9, 15.1-15.6,
   20.10-20.11).
@@ -59,7 +60,7 @@ Zastareli delovi ta dva dokumenta su usklađeni sa kodom 2026-10-16; šta je pro
 11. [Šta se desi kad otvoriš jednu admin stranicu plugina?](#11-šta-se-desi-kad-otvoriš-jednu-admin-stranicu-plugina)
 12. [Configuration: kako se prodavnica povezuje sa Worldline-om?](#12-configuration-kako-se-prodavnica-povezuje-sa-worldline-om)
 13. [Payment methods: kako admin pravi metode plaćanja?](#13-payment-methods-kako-admin-pravi-metode-plaćanja)
-14. [Settings: šta znače četiri podešavanja i gde se čuvaju?](#14-settings-šta-znače-četiri-podešavanja-i-gde-se-čuvaju)
+14. [Settings: šta znače šest podešavanja i gde se čuvaju?](#14-settings-šta-znače-šest-podešavanja-i-gde-se-čuvaju)
 15. [Logs: kako stranica čita log?](#15-logs-kako-stranica-čita-log)
 16. [Checkout, korak 1: koje metode kupac vidi i zašto baš te?](#16-checkout-korak-1-koje-metode-kupac-vidi-i-zašto-baš-te)
 17. [Checkout, korak 2: šta se desi kad kupac klikne PLACE ORDER?](#17-checkout-korak-2-šta-se-desi-kad-kupac-klikne-place-order)
@@ -67,6 +68,7 @@ Zastareli delovi ta dva dokumenta su usklađeni sa kodom 2026-10-16; šta je pro
 19. [Kada nastaje narudžbina i ko joj menja status?](#19-kada-nastaje-narudžbina-i-ko-joj-menja-status)
 20. [Panel na stranici narudžbine: capture, refund, cancel](#20-panel-na-stranici-narudžbine-capture-refund-cancel)
 21. [Koja dva problema plugin zaobilazi sopstvenim proxy klasama?](#21-koja-dva-problema-plugin-zaobilazi-sopstvenim-proxy-klasama)
+21a. [Pozadinska obrada: kako radi red zadataka, automatska naplata i brisanje starih logova? (MIDU-1230)](#21a-pozadinska-obrada-kako-radi-red-zadataka-automatska-naplata-i-brisanje-starih-logova-midu-1230)
 
 **Deo IV. Referenca**
 
@@ -1704,15 +1706,16 @@ repozitorijum u tabelu plugina.
 
 ---
 
-## 14. Settings: šta znače četiri podešavanja i gde se čuvaju?
+## 14. Settings: šta znače šest podešavanja i gde se čuvaju?
 
 ### 14.1 Običnim rečima
 
 Tri podešavanja su iz demo projekta (Log level, Default currency, Rows per page), a četvrto, Payment action, je
 Core-ovo: da li Worldline novac uzme odmah ili ga samo rezerviše, pa ga trgovac kasnije naplati sa stranice
-narudžbine.
+narudžbine. Peto i šesto, Auto capture i Log retention, dodata su 2026-10-20 (MIDU-1230) i takođe su Core-ova:
+da li se rezervisan novac naplati sam, u pozadini, i koliko dana se čuvaju log zapisi (poglavlje 21a).
 
-### 14.2 Sva četiri podešavanja
+### 14.2 Svih šest podešavanja
 
 | Polje | Moguće vrednosti | Default | Gde se čuva | Ko ga čita | Danas u dev bazi |
 |---|---|---|---|---|---|
@@ -1720,6 +1723,8 @@ narudžbine.
 | **Default currency** | valute uključene u prodavnici | `EUR` ako je prodavnica ima, inače prazno ("Choose a currency") | `ConfigEntity` ključ `defaultCurrency` | prazna forma nove metode plaćanja (prva izabrana valuta) | `RSD` |
 | **Rows per page** | ceo broj 5-100 | 10 | `ConfigEntity` ključ `rowsPerPage` | lista Payment methods i stranica Logs | nije sačuvano → 10 |
 | **Payment action** | SALE, FINAL_AUTHORIZATION, PRE_AUTHORIZATION | SALE | **dva mesta**: Core `PaymentSettingsEntity.paymentAction` (SALE ili FINAL_AUTHORIZATION) i plugin `ConfigEntity` ključ `cardAuthorizationMode` (FINAL_AUTHORIZATION ili PRE_AUTHORIZATION) | Core (status narudžbine, automatic capture, zahtev ka Worldline-u) i `HostedCheckoutProxy` | Core `FINAL_AUTHORIZATION` + `cardAuthorizationMode = PRE_AUTHORIZATION` → forma pokazuje PRE_AUTHORIZATION |
+| **Auto capture** (od 2026-10-20) | uključeno / isključeno | isključeno | Core `PaymentSettingsEntity.automaticCapture`: -1 = isključeno, 60 = uključeno (minuta posle autorizacije) | Core (`captureAt` pri ažuriranju statusa) i `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureSetting.php` (zadaci u pozadini) | -1 → isključeno |
+| **Log retention** (od 2026-10-20) | 1, 2, 7, 14 dana | 14 | Core `LogSettings.logRecordsLifetime` (uz nepromenjen `debugMode`) | `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/LogCleanup/LogCleaner.php` (brisanje jednom dnevno) | 14 |
 
 Izvori default-a: `SettingsService::DEFAULT_CURRENCY = 'EUR'` i `DEFAULT_ROWS_PER_PAGE = 10`
 (`/home/veljkozbiljic/logeecom/plugin0/lib/Logeecom/Settings/Service/SettingsService.php:27-29`),
@@ -2899,6 +2904,175 @@ tumači odgovor posle prijema, a Core ostaje netaknut.
 
 ---
 
+## 21a. Pozadinska obrada: kako radi red zadataka, automatska naplata i brisanje starih logova? (MIDU-1230)
+
+Dodato 2026-10-20, grana `feature/MIDU-1230`. Ceo opis na engleskom, za PR, sa svim proverama:
+`/home/veljkozbiljic/logeecom/plugin0/docs/BACKGROUND.md`.
+
+### 21a.1 Velika slika: ko učestvuje
+
+Pet različitih stvari, ovim redom:
+
+1. **cron u kontejneru `logeecom_dev`** (pokreće ga dockware `/entrypoint.sh:126-127` pri svakom startu): svakog
+   minuta pokrene `/home/veljkozbiljic/logeecom/plugin0/bin/task-runner-wakeup.php` (red u `/etc/cron.d/plugin0-task-runner`);
+2. **ta skripta** zove Core `TaskRunnerWakeup::wakeup()`; ako runner već radi, ne radi ništa;
+3. **Core** (`/home/veljkozbiljic/logeecom/plugin0/vendor/wl-online-payments-direct/plugin-core-base/src/Infrastructure/TaskExecution/`)
+   pravi runner i sam sebi šalje HTTP zahtev na
+   `/home/veljkozbiljic/logeecom/plugin0/controllers/front/asyncprocess.php`; runner bira zadatke iz reda i svaki
+   pokreće novim takvim zahtevom, a posle svakog kruga okine `TickEvent`, na koji periodični poslovi stavljaju
+   zadatke u red;
+4. **plugin0** daje skladište reda (`/home/veljkozbiljic/logeecom/plugin0/src/Infrastructure/Repository/QueueItemRepository.php`),
+   taj HTTP ulaz i dva sopstvena posla: automatsku naplatu
+   (`/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/`) i brisanje starih logova
+   (`/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/LogCleanup/`);
+5. **Worldline** prima capture zahteve i daje stanje plaćanja.
+
+Prostim rečima: cron je budilnik, Core je radnik koji sam sebe budi na svakih ~6 s, plugin0 mu daje sto (tabelu
+za red) i dva posla.
+
+### 21a.2 Zašto red zadataka, a ne petlja u zahtevu?
+
+Petlja u zahtevu koji trgovac čeka pukne na `max_execution_time` (30 s u `/etc/php/8.2/fpm/php.ini` kontejnera),
+drži jednog od 5 PHP-FPM radnika (`pm.max_children = 5`), stane kad trgovac zatvori browser i posle pada ne zna dokle
+je stigla. Zadatak u redu radi u svom kratkom zahtevu, a stanje (status, broj pokušaja) je u bazi.
+
+### 21a.3 Gde je red i kako se zadatku menja stanje?
+
+- Red je u istoj tabeli kao sve ostalo, `ps_plugin0_entity`, redovi `type = 'QueueItem'`; kolone `index_1` .. `index_9`
+  su redom `status`, `taskType` (kratko ime klase zadatka), `queueName`, `context`, `queueTime`,
+  `lastExecutionProgress`, `lastUpdateTimestamp`, `priority`, `parentId`.
+- Stanja: `queued` → `in_progress` → `completed`, ili nazad u `queued` posle greške, ili `failed` posle poslednjeg
+  pokušaja, ili `aborted`. Menja ih samo Core `QueueService`
+  (`/home/veljkozbiljic/logeecom/plugin0/vendor/wl-online-payments-direct/plugin-core-base/src/Infrastructure/TaskExecution/QueueService.php`),
+  uvek kroz `saveWithCondition` (`/home/veljkozbiljic/logeecom/plugin0/src/Infrastructure/Repository/QueueItemRepository.php:75`):
+  upis prolazi samo ako je red u bazi još u očekivanom stanju.
+
+Pojednostavljeno, zašto je taj uslov važan:
+
+```php
+// dva procesa u istoj sekundi pokušaju da pokrenu isti zadatak
+UPDATE ... SET status = 'in_progress' WHERE id = 968 AND status = 'created';   // proces A: 1 red izmenjen
+UPDATE ... SET status = 'in_progress' WHERE id = 968 AND status = 'created';   // proces B: 0 redova
+// B sada ponovo proveri uslov (status = 'created'?) -> ne važi -> QueueItemSaveException -> B ne pokreće zadatak
+```
+
+Prostim rečima: drugi proces dobija grešku, pa isti zadatak nikad ne radi dvaput u isto vreme.
+
+### 21a.4 Šta se desi kad zadatak padne? (retry)
+
+- Zadatak baci izuzetak → Core `QueueService::fail` (`QueueService.php:208-242`): `retries + 1`, u
+  `failureDescription` doda "Attempt N: poruka", i vrati zadatak u red; kad je `retries > 5`, zadatak je `failed` i Core
+  zove `onFail()`.
+- Najviše **6 izvršavanja**, bez pauze između (sledeći krug runnera, ~6 s).
+- Provereno kroz pravi red 2026-10-20 probnim zadatkom `/home/veljkozbiljic/logeecom/plugin0/tests/Support/AlwaysFailingProbeTask.php`:
+  pokušaji 1-6 na oko 6 s, pa `failed` i poziv `onFail`.
+
+### 21a.5 Šta znače nova polja Auto capture i Log retention?
+
+| Polje | Vrednosti | Gde se čuva | Default |
+|---|---|---|---|
+| Auto capture | uključeno / isključeno | Core `PaymentSettings.automaticCapture`: isključeno = -1, uključeno = 60 (minuta) | isključeno |
+| Log retention | 1, 2, 7, 14 dana | Core `LogSettings.logRecordsLifetime` | 14 |
+
+Klase: `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureSetting.php:56` (čuvanje),
+`/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/LogCleanup/LogRetentionSetting.php:62` (čuvanje),
+pozvane iz `/home/veljkozbiljic/logeecom/plugin0/src/Controller/Admin/SettingsController.php:94-95` (Save) i `:60-61`
+(Restore). Svaka promena upiše INFO u Logs ("Auto capture turned on/off", "Log retention changed").
+
+**Šta "uključeno" tačno znači:** rok naplate ne računa plugin nego Core. Kad Core vidi autorizovano plaćanje dok je
+Payment action "Authorize only" i auto capture uključen, upiše transakciji `captureAt = sada + 60 minuta`
+(`/home/veljkozbiljic/logeecom/plugin0/vendor/wl-online-payments-direct/plugin-core-base/src/BusinessLogic/PaymentProcessor/Services/Payment/StatusUpdateService.php:71-79`).
+60 je najmanja vrednost koju Core prima. Zato se naplata desi oko 60-75 minuta posle autorizacije.
+
+### 21a.6 Kako teče jedna automatska naplata?
+
+1. Na svakih 15 minuta, samo dok je auto capture uključen,
+   `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureListener.php:41` stavi u red
+   pregled `AutoCaptureScanTask`.
+2. Pregled (`/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureScheduler.php:46`)
+   uzme plaćanja kojima je prošao `captureAt` i za svako novo upiše red u evidenciju
+   (`/home/veljkozbiljic/logeecom/plugin0/src/Entity/AutoCaptureEntity.php`, stanje `scheduled`) i stavi u red jedan
+   `AutoCapturePaymentTask` (red `plugin0-auto-capture`, jedna naplata odjednom).
+3. Zadatak (`/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCapturePaymentTask.php:36`)
+   zove `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureProcessor.php:64`:
+   - log "attempt started" sa narudžbinom, korpom, plaćanjem i brojem pokušaja;
+   - auto capture isključen u međuvremenu → ništa se ne šalje;
+   - pod zaključavanjem transakcije (`/home/veljkozbiljic/logeecom/plugin0/src/Infrastructure/TransactionLock.php:31`)
+     pročita **sveže** stanje baš tog plaćanja kod Worldline-a; ako nema šta da se naplati → ne šalje capture, samo
+     osveži narudžbinu (`AutoCaptureProcessor.php:153`);
+   - inače capture celog preostalog iznosa, red u panelu narudžbine (kolona Employee: "Automatic"), log "succeeded",
+     pa osvežavanje narudžbine.
+4. Greška → log sa brojem pokušaja i izuzetak dalje → Core ponavlja (21a.4). Posle šestog neuspeha Core zove
+   `onFail` → `AutoCaptureProcessor.php:108` (`giveUp`): evidencija `failed`, red "Automatic capture failed after 6
+   attempts ..." u panelu narudžbine i ERROR u Logs. To plaćanje se više ne pokušava automatski; naplaćuje ga trgovac.
+
+**Zašto nema dvostruke naplate, ni posle timeout-a:** pre svakog capture-a zadatak pita Worldline koliko je još
+moguće naplatiti. Ako je prethodni pokušaj zapravo prošao, a odgovor nije stigao, ponovljen pokušaj vidi da je
+naplaćeno i ne šalje ništa.
+
+```php
+// pojednostavljeno, AutoCaptureProcessor::captureIfNeeded
+$state = $gateway->captureState($storeId, $paymentId);   // GET /payments/{id}/details
+if (!$state->canCapture()) { return NOT_NEEDED; }        // već naplaćeno: ništa se ne šalje
+$gateway->capture($storeId, $paymentId, $state->getAvailable());
+```
+
+### 21a.7 Zašto plugin0 nije koristio Core-ov auto capture i Core-ovo brisanje logova?
+
+Dva odvojena problema:
+
+1. **Core auto capture** (`/home/veljkozbiljic/logeecom/plugin0/vendor/wl-online-payments-direct/plugin-core-base/src/Bootstrap/ApiFacades/PaymentProcessor/BackgroundProcesses/AutoCaptureCheckTask.php:27-34`)
+   ne gleda da li je podešavanje i dalje uključeno, ne vidi grešku (fasada je vraća kao odgovor, pa nema ponavljanja),
+   ne osvežava lokalni status (isto plaćanje bira ponovo za 15 minuta) i ne loguje pokušaje.
+2. **Core brisanje logova** računa rok svakom zapisu kad zapis nastane
+   (`/home/veljkozbiljic/logeecom/plugin0/vendor/wl-online-payments-direct/plugin-core-base/src/Bootstrap/DataAccess/Monitoring/WebhookLogRepository.php:57-59`),
+   pa promena podešavanja ne važi za stare zapise; i ne briše `ps_log` (Logs strana).
+
+Oba su zamenjena preko Core imenika servisa, bez izmene Core-a:
+`/home/veljkozbiljic/logeecom/plugin0/src/Bootstrap.php:206` (`initBackgroundProcesses`, listener za auto capture) i
+`/home/veljkozbiljic/logeecom/plugin0/src/Bootstrap.php:195` (servis za čišćenje logova). Core ih uzima tek kad okine
+`TickEvent`, pa važi registracija plugina, koja dolazi posle Core-ove.
+
+### 21a.8 Šta tačno briše čišćenje logova?
+
+Jednom dnevno, `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/LogCleanup/LogCleaner.php:80` na
+početku svakog pokretanja pročita Log retention i obriše sve starije od `sada − N dana`, sa tri mesta:
+
+| Mesto | Šta je | Po kojoj koloni |
+|---|---|---|
+| `ps_log`, samo redovi koji počinju sa `WORLDLINE [` | ono što vidiš na Logs strani | `date_add` |
+| `ps_plugin0_entity`, `type = 'MonitoringLog'` | Core zapis zahteva ka Worldline-u i odgovora (dok je debug mode uključen) i grešaka | `createdAt` |
+| `ps_plugin0_entity`, `type = 'WebhookLog'` | Core zapis primljenih webhook-ova | `createdAt` |
+
+Ne briše: logove PrestaShop-a i drugih modula, narudžbine, transakcije, red zadataka, evidenciju obrađenih webhook
+događaja. Svako pokretanje upiše jedan red, npr.
+`Log cleanup finished: 3 entries older than 14 days deleted | {"retentionDays":14,"cutoff":"2026-10-06 14:21:52","psLog":1,"monitoringLog":1,"webhookLog":1,"total":3}`.
+
+Provereno 2026-10-20 probnim redovima (20 i 13,5 dana stari): sa 14 dana obrisani su samo oni od 20 dana; posle
+promene samo podešavanja na 13 dana sledeće pokretanje je obrisalo i one od 13,5 dana; pravi logovi i red koji nije
+Worldline-ov ostali su netaknuti (`/home/veljkozbiljic/logeecom/plugin0/docs/BACKGROUND.md`, 9.2).
+
+### 21a.9 Kako da proveriš
+
+- Da li runner radi: `docker exec logeecom_dev tail -n 5 /tmp/plugin0-task-runner-wakeup.log` (svakog minuta "already
+  active" ili "woken up").
+- Red zadataka: upit iz `/home/veljkozbiljic/logeecom/plugin0/docs/OKRUZENJE.md`, poglavlje 19, "red zadataka".
+- Logs strana: redovi komponenti `AutoCapture` i `LogCleanup`.
+- Unit testovi: `/home/veljkozbiljic/logeecom/plugin0/tests/Unit/BackgroundProcessing/` (28 testova).
+
+### 21a.10 Stanje
+
+| Deo | Stanje |
+|---|---|
+| Red zadataka, `asyncprocess`, cron | radi u dev prodavnici od 2026-10-20; cron je oživeo zaustavljen lanac |
+| Retry pravilo | provereno kroz pravi red (6 pokušaja, `onFail`) |
+| Čišćenje logova | provereno sa probnim redovima i promenom podešavanja |
+| Auto capture bez novca | provereno: stanje plaćanja, "nema šta da se naplati", put greške do `failed` |
+| Automatska naplata do kraja (capture zahtev koji zaista ode u Worldline test okruženje, preprod; pravog novca nema) | **nije provereno**: radi je tim test karticom (novo plaćanje sa "Authorize only", uključen auto capture, pa 60-75 minuta); dok je uključen, rok dobiju i starije autorizovane narudžbine čim im se osveži status (u dev prodavnici 2026-10-20: narudžbine 19 i 20) |
+| Settings strana i panel u browseru | **nije provereno** (nema admin prijave); oba Twig šablona prolaze `lint:twig` |
+
+---
+
 # Deo IV. Referenca
 
 ## 22. Katalog svih fajlova plugina
@@ -3026,6 +3200,35 @@ CSS je namerno u `/home/veljkozbiljic/logeecom/plugin0/views/css/admin.css`, a n
 "Selector ... is never used" za CSS u layout-u koji koriste samo podšabloni (**iz beleški**).
 
 ---
+
+### 22.7 Dodato 2026-10-20 (MIDU-1230, pozadinska obrada; poglavlje 21a)
+
+| Fajl | Linija | Uloga |
+|---|---|---|
+| `/home/veljkozbiljic/logeecom/plugin0/bin/task-runner-wakeup.php` | 52 | cron ulaz: `TaskRunnerWakeup::wakeup()`; preko weba 404 |
+| `/home/veljkozbiljic/logeecom/plugin0/controllers/front/asyncprocess.php` | 90 | `Plugin0AsyncprocessModuleFrontController`: odgovori 200 pa `AsyncProcessService::runProcess($guid)` |
+| `/home/veljkozbiljic/logeecom/plugin0/src/Infrastructure/Repository/QueueItemRepository.php` | 158 | Core `QueueItemRepository`: izbor sledećeg zadatka, uslovni upis |
+| `/home/veljkozbiljic/logeecom/plugin0/src/Infrastructure/TransactionLock.php` | 55 | MySQL `GET_LOCK` po transakciji (deli ga i `StatusUpdateService`) |
+| `/home/veljkozbiljic/logeecom/plugin0/src/Infrastructure/CorePaymentSettings.php` | 80 | čitaj-izmeni-upiši Core `PaymentSettings` (Payment action, Auto capture) |
+| `/home/veljkozbiljic/logeecom/plugin0/src/Entity/AutoCaptureEntity.php` | 180 | evidencija automatskih naplata, tip `AutoCapture` |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/TaskAttempt.php` | 40 | broj pokušaja zadatka (retries + 1) i najviše pokušaja |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureSetting.php` | 87 | polje Auto capture |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureListener.php` | 69 | zamena Core `AutoCaptureCheckListener`-a: pregled na 15 min |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureScanTask.php` | 21 | zadatak: pregled dospelih plaćanja |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureScheduler.php` | 114 | zakazivanje jedne naplate po plaćanju |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCapturePaymentTask.php` | 108 | zadatak: naplata jednog plaćanja, `onFail` |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureProcessor.php` | 205 | jedan pokušaj naplate i `giveUp` |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureLedger.php` | 147 | čita i piše evidenciju |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/AutoCaptureGateway.php` | 72 | interfejs prema Core-u, PrestaShop-u i redu (za testove) |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/CoreAutoCaptureGateway.php` | 188 | prava implementacija tog interfejsa |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/AutoCapture/CaptureState.php` | 54 | koliko se još može naplatiti |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/LogCleanup/LogRetentionSetting.php` | 113 | polje Log retention |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/LogCleanup/LogCleanupTaskService.php` | 37 | zamena Core `LogCleanupTaskService`-a |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/LogCleanup/LogRetentionTask.php` | 25 | zadatak: dnevno čišćenje |
+| `/home/veljkozbiljic/logeecom/plugin0/src/BackgroundProcessing/LogCleanup/LogCleaner.php` | 167 | brisanje sa tri mesta i log broja obrisanih |
+| `/home/veljkozbiljic/logeecom/plugin0/tests/Unit/BackgroundProcessing/` | 3 fajla | 28 testova |
+| `/home/veljkozbiljic/logeecom/plugin0/tests/Support/FakeAutoCaptureGateway.php`, `InMemoryAutoCaptureLedger.php`, `AlwaysFailingProbeTask.php` | 171, 42, 33 | pomoćne klase testova; poslednja je probni zadatak za proveru retry pravila kroz pravi red |
+| `/home/veljkozbiljic/logeecom/plugin0/docs/BACKGROUND.md` | 485 | opis i provere (engleski, za PR) |
 
 ## 23. Interfejsi koji su ti važni, na jednom mestu
 
@@ -3172,7 +3375,8 @@ docker exec -u 1000:1000 -e HOME=/tmp/plugin0-home -w /var/www/html/public/prest
 - `-w .../modules/plugin0`: radni folder je plugin (bind mount tvog foldera).
 - `php -d xdebug.mode=off`: Xdebug je uključen u kontejneru; ovako testovi ne čekaju IDE.
 
-Rezultat 2026-10-16: `OK (169 tests, 460 assertions)`, PHPUnit 11.5.57.
+Rezultat 2026-10-16: `OK (169 tests, 460 assertions)`, PHPUnit 11.5.57. Rezultat 2026-10-20, posle pozadinske obrade
+(poglavlje 21a, testovi u `/home/veljkozbiljic/logeecom/plugin0/tests/Unit/BackgroundProcessing/`): `OK (227 tests, 635 assertions)`.
 
 Jedan folder ili fajl: dodaj putanju na kraj, npr. `... vendor/bin/phpunit tests/Unit/Order`.
 
@@ -3375,6 +3579,8 @@ Ili interaktivno: `docker exec -it logeecom_dev mysql -uroot -proot prestashop`.
 | uplate jedne narudžbine | `SELECT amount, payment_method, transaction_id, date_add FROM ps_order_payment WHERE order_reference = (SELECT reference FROM ps_orders WHERE id_order = 16);` |
 | log operacija panela | `SELECT CAST(index_1 AS UNSIGNED) AS orderId, FROM_UNIXTIME(CAST(index_2 AS UNSIGNED)) AS createdAt, JSON_UNQUOTE(JSON_EXTRACT(data, '$.action')) AS action, JSON_EXTRACT(data, '$.amount') AS amount, JSON_UNQUOTE(JSON_EXTRACT(data, '$.outcome')) AS outcome, JSON_UNQUOTE(JSON_EXTRACT(data, '$.providerStatus')) AS status FROM ps_plugin0_entity WHERE type = 'PaymentOperation' ORDER BY id DESC LIMIT 20;` |
 | razgovor sa Worldline-om (samo sa debug mode) | `SELECT id, index_4 AS orderId, index_5 AS paymentNumber, FROM_UNIXTIME(CAST(index_7 AS UNSIGNED)) AS createdAt, JSON_UNQUOTE(JSON_EXTRACT(data, '$.monitoringLog.requestEndpoint')) AS endpoint, JSON_EXTRACT(data, '$.monitoringLog.statusCode') AS http FROM ps_plugin0_entity WHERE type = 'MonitoringLog' ORDER BY id DESC LIMIT 20;` |
+| red zadataka (od 2026-10-20) | `SELECT id, index_1 AS status, index_2 AS task, index_3 AS queue, JSON_EXTRACT(data, '$.retries') AS retries FROM ps_plugin0_entity WHERE type = 'QueueItem' ORDER BY id DESC LIMIT 20;` |
+| evidencija automatskih naplata (od 2026-10-20) | `SELECT id, index_1 AS paymentId, index_2 AS state, JSON_EXTRACT(data, '$.attempts') AS attempts, JSON_UNQUOTE(JSON_EXTRACT(data, '$.lastError')) AS lastError FROM ps_plugin0_entity WHERE type = 'AutoCapture';` |
 | hook-ovi modula | `SELECT h.name FROM ps_hook_module hm JOIN ps_hook h ON h.id_hook = hm.id_hook JOIN ps_module m ON m.id_module = hm.id_module WHERE m.name = 'plugin0';` |
 | valute i zemlje modula | `SELECT c.iso_code FROM ps_module_currency mc JOIN ps_currency c ON c.id_currency = mc.id_currency JOIN ps_module m ON m.id_module = mc.id_module WHERE m.name = 'plugin0';` (isto sa `ps_module_country` i `ps_country`) |
 | ID-jevi statusa | `SELECT name, value FROM ps_configuration WHERE name IN ('PS_OS_PAYMENT', 'PS_OS_ERROR', 'PS_OS_BANKWIRE', 'PS_OS_CANCELED', 'PS_OS_REFUND');` |
@@ -3579,12 +3785,12 @@ izostala), izlazni kod 0, a u `ps_log` nije nastao nijedan nov red (Log level In
 | # | Šta fali | Posledica danas | Šta bi trebalo (Core deo koji to radi) |
 |---|---|---|---|
 | 1 | **webhook**: urađen 2026-10-19 (`/home/veljkozbiljic/logeecom/plugin0/controllers/front/webhook.php`, `src/Webhook/*`, `src/Infrastructure/WebhookTransformer.php`, `src/Infrastructure/StatusUpdateService.php`, `src/Entity/WebhookEventEntity.php`; ceo opis u `docs/WEBHOOK.md`) | ostaje: prijava adrese u Merchant Portal-u (Developer > Webhooks) i prva prava isporuka od Worldline-a; bez toga promene iz portala i dalje ne stižu same | prijava adrese sa Configuration stranice (12.2) u portal; posle toga provera po `docs/WEBHOOK.md`, sekcija 7 |
-| 2 | **red zadataka**: nema repozitorijuma za `QueueItem` ni front controller-a `asyncprocess` (`Plugin0\Configuration::getAsyncProcessUrl()` ga ipak imenuje, `/home/veljkozbiljic/logeecom/plugin0/src/Configuration.php:57`) | ne rade Core pozadinski poslovi: provera statusa kad webhook ne stigne (`TransactionStatusCheckTask`), automatski capture, čišćenje završenih zadataka, brisanje isteklih `MonitoringLog` redova, Core disconnect | `QueueItemRepository` registrovan za `QueueItem` + `asyncprocess` koji zove `AsyncProcessService::runProcess($guid)` (CORE.md 4.9, 7.9) |
+| 2 | **red zadataka**: urađen 2026-10-20 (MIDU-1230; `/home/veljkozbiljic/logeecom/plugin0/src/Infrastructure/Repository/QueueItemRepository.php`, `/home/veljkozbiljic/logeecom/plugin0/controllers/front/asyncprocess.php`, `/home/veljkozbiljic/logeecom/plugin0/bin/task-runner-wakeup.php` iz cron-a; poglavlje 21a) | ostaje: Core disconnect kroz red (red 8) i automatska naplata do kraja u test okruženju (browser test, test kartica) | `/home/veljkozbiljic/logeecom/plugin0/docs/BACKGROUND.md`, 9.5 |
 | 3 | metode tipa **iFrame** (Worldline Hosted Tokenization) | ne nude se na checkout-u (16.2, uslov 2) | `CheckoutAPI::hostedTokenization()`; pazi, Core metoda se zove `crate`, sa greškom u imenu (CORE.md, zamka 12) |
 | 4 | proizvodi sa odvojenim capture-om (Apple Pay, Google Pay, PayPal, grupa `cards`...) | ne nude se (16.2, uslov 4) | Core konfiguracija metode (`PaymentMethodConfigEntity`) za te proizvode |
 | 5 | provera dostupnosti kod Worldline-a pri prikazu opcija | metoda može da se prikaže, a da sesija padne (npr. korpa u RSD) | `CheckoutAPI::paymentMethods()->getAvailablePaymentMethods()` (`GET /products`) pre prikaza |
 | 6 | `VersionService` | `AdminAPI::version()` ne radi; plugin ga ne zove | implementacija `/home/veljkozbiljic/logeecom/plugin0/vendor/wl-online-payments-direct/plugin-core-base/src/BusinessLogic/Domain/Integration/Version/VersionService.php` |
-| 7 | admin za ostala Core podešavanja | automatski capture, broj pokušaja, mapiranje statusa, šablon strane, debug mode i trajanje logova, Pay by Link, webhook podešavanja nemaju stranicu; menjaju se samo skriptom | stranice nad `AdminAPI::generalSettings()` |
+| 7 | admin za ostala Core podešavanja | od 2026-10-20 Settings ima Auto capture i Log retention (14, 21a); broj pokušaja, mapiranje statusa, šablon strane, debug mode, Pay by Link i webhook podešavanja i dalje nemaju stranicu; menjaju se samo skriptom | stranice nad `AdminAPI::generalSettings()` |
 | 8 | pun disconnect | Disconnect briše samo kredencijale; Core podešavanja, transakcije i metode ostaju (12.4) | Core `generalSettings()->disconnect()` posle reda zadataka |
 | 9 | iznos uplate posle delimične naplate | PrestaShop blok "Payment" pokazuje ceo iznos fakture (20.9); po beleškama ostavljeno svesno | — |
 | 10 | ko je šta uradio na stranici Logs | `ps_log.id_employee` se upisuje, ali se ne prikazuje (15) | kolona u `LogReader` i šablonu |
@@ -3777,14 +3983,14 @@ svim redovima, a jedini neescape-ovan `|` u code span-u tabele (`CORE.md`, pogla
 | Checkout Hosted Checkout (MIDU-1221) | gotovo, samo tip Redirect | browser 2026-10-15 (**iz beleški**), baza, Apache log | plaćanje koje ostane "u obradi" duže od čekanja |
 | Panel na narudžbini (MIDU-1224) | gotovo, commit `06a7b91` | 52 testa `Order`, baza (narudžbina 16), browser (**iz beleški**) | — |
 | `HostedCheckoutProxy`, `PaymentsProxy` | gotovo | 17 + 9 testova; baza (narudžbina 16) | ponašanje na Live okruženju |
-| Unit testovi | 195 pokretanja, 525 provera, svi prolaze | pokrenuti 2026-10-19 | — |
+| Unit testovi | 227 pokretanja, 635 provera, svi prolaze | pokrenuti 2026-10-20 | — |
 | LF krajevi linija | svi praćeni fajlovi LF | `git ls-files --eol` 2026-10-16 | — |
 | `/home/veljkozbiljic/logeecom/plugin0/lib/Logeecom` = demo `/home/veljkozbiljic/laravel-docker/src` | identično | `diff -rq` 2026-10-16 | — |
 | Core i SDK netaknuti | po beleškama identični originalu (2026-10-15) | `diff -rq` sa zip-om commit-a (**iz beleški**) | danas nije ponovljeno (traži internet) |
 | Webhook (tiket MIDU-1227) | kod gotov 2026-10-19, nije commit-ovan; adresa radi kroz ngrok | 26 unit testova; curl sa pravim HMAC-om (potpis, duplikat, zaključavanje, čišćenje), `docs/WEBHOOK.md` 7 | prijava adrese u Merchant Portal-u i prva prava Worldline isporuka; narudžbina iz webhook-a za svežu korpu (korpa 18 ima polu-napravljenu narudžbinu 17 iz probe pre popravke) |
-| Red zadataka i `asyncprocess` | ne postoje | — | — |
+| Red zadataka, `asyncprocess`, cron (MIDU-1230) | gotovo 2026-10-20, nije commit-ovano | lanac, cron, retry kroz pravi red, čišćenje logova sa promenom podešavanja, auto capture bez novca (21a.10, `/home/veljkozbiljic/logeecom/plugin0/docs/BACKGROUND.md` 9) | automatska naplata do kraja u test okruženju; Settings strana i panel u browseru |
 | iFrame (Hosted Tokenization) | ne postoji | — | — |
-| Core debug mode | **uključen** u dev prodavnici; 287 `MonitoringLog` redova; nema automatskog brisanja | baza 2026-10-16 | — |
+| Core debug mode | **uključen** u dev prodavnici; `MonitoringLog` redove od 2026-10-20 briše dnevno čišćenje starije od Log retention (14 dana) | baza 2026-10-20 | — |
 | Grane | `main` ima samo MIDU-1215; 1218, `settings-and-payment_pages`, 1221 i 1224 su naslagane i nespojene | `git` 2026-10-16 | — |
 | `/home/veljkozbiljic/logeecom/plugin0/docs/VODIC.md` | nov fajl, nije u git-u, nije commit-ovan | — | — |
 | poruke posle radnje (flash) sa imenom metode plaćanja | ime ide u poruku bez escape-ovanja, a PrestaShop je prikazuje kao HTML (11.1) | čitanje koda 2026-10-16 | u browseru nije probano |
@@ -3797,8 +4003,8 @@ plugin0 je PrestaShop modul koji Worldline plaćanje radi preko Logeecom Core-a:
 zove Core, Core zove Worldline, a sve što Core treba od prodavnice dobija preko klasa plugina iz tabele 6.2. Metode plaćanja i podešavanja su demo projekat preslikan bez izmene, a čuvaju se kroz Core u jednoj
 tabeli plugina. Narudžbina nastaje tek posle potvrđenog plaćanja i njen status menja samo `ShopOrderService`.
 Dve Worldline/Core nezgode (protivrečni režimi autorizacije i čitanje samo rezervacije `_0`) su zaobiđene u
-pluginu, bez diranja Core-a. Webhook je dodat 2026-10-19 (`docs/WEBHOOK.md`); najveća preostala praznina je red
-zadataka (pozadinska provera statusa i automatski capture).
+pluginu, bez diranja Core-a. Webhook je dodat 2026-10-19 (`docs/WEBHOOK.md`), a red zadataka sa automatskom naplatom i brisanjem starih logova
+2026-10-20 (`docs/BACKGROUND.md`, poglavlje 21a); preostaje automatska naplata do kraja u test okruženju (browser test test karticom).
 
 ### 36.3 Sledeći korak
 

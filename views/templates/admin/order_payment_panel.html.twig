@@ -12,7 +12,8 @@
   plugin0.php šalje: order_id, can_act (zaposleni sme da menja narudžbine), panel (PaymentManager::panel):
   payment_id, payment_method, status_code, status_warning, details_error, state (currency, total, capture,
   refund, cancel sa possible/done/pending/available/available_value i cancel.blocked, errors) ili null, log (redovi
-  sa time, action, amount, outcome, message, provider_status, employee_id).
+  sa time, action, amount, outcome, message, provider_status, employee_id). Log sadrži i automatske naplate iz
+  pozadine (BackgroundProcessing\AutoCapture): njihov employee_id je 0 i u koloni Employee piše "Automatic".
 #}
 {% set state = panel.state %}
 <div class="card mt-2" id="plugin0_order_payment_block">
@@ -114,7 +115,7 @@
 
     <h4 class="mt-3">Operation log</h4>
     {% if panel.log is empty %}
-      <p class="text-muted mb-0">No capture, refund or cancel has been attempted from this page.</p>
+      <p class="text-muted mb-0">No capture, refund or cancel has been attempted for this order, from this page or automatically.</p>
     {% else %}
       <table class="table table-sm mb-0">
         <thead>
@@ -138,7 +139,8 @@
                 <span class="badge badge-{{ badge[row.outcome]|default('secondary') }}">{{ row.outcome }}</span>
               </td>
               <td>{{ row.message }}{% if row.provider_status %} <small class="text-muted">({{ row.provider_status }}{% if row.provider_operation_id %} · {{ row.provider_operation_id }}{% endif %})</small>{% endif %}</td>
-              <td>#{{ row.employee_id }}</td>
+              {# employee_id 0 = automatska naplata u pozadini (BackgroundProcessing\AutoCapture), ne zaposleni. #}
+              <td>{% if row.employee_id > 0 %}#{{ row.employee_id }}{% else %}Automatic{% endif %}</td>
             </tr>
           {% endfor %}
         </tbody>

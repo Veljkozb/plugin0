@@ -4,6 +4,15 @@ namespace Plugin0;
 
 use Plugin0\Infrastructure\Repository\BaseRepository;
 use Plugin0\Infrastructure\Repository\LogsRepository;
+use Plugin0\Infrastructure\Repository\QueueItemRepository;
+use WOP\OnlinePayments\Core\Infrastructure\TaskExecution\QueueItem;
+use WOP\OnlinePayments\Core\Infrastructure\TaskExecution\QueueService;
+use Plugin0\BackgroundProcessing\AutoCapture\AutoCaptureListener;
+use Plugin0\BackgroundProcessing\LogCleanup\LogCleanupTaskService;
+use Plugin0\Entity\AutoCaptureEntity;
+use WOP\OnlinePayments\Core\Bootstrap\ApiFacades\PaymentProcessor\BackgroundProcesses\AutoCaptureCheckListener;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\LogCleanup\LogCleanupTaskServiceInterface;
+use WOP\OnlinePayments\Core\BusinessLogic\Domain\Multistore\TenantRegistryInterface;
 use Plugin0\Entity\PaymentMethodEntity;
 use Plugin0\Entity\PaymentOperationEntity;
 use WOP\OnlinePayments\Core\Bootstrap\BootstrapComponent;
@@ -179,6 +188,32 @@ class Bootstrap extends BootstrapComponent
                 ServiceRegister::getService(PaymentSettingsRepositoryInterface::class)
             );
         }));
+
+        // Zamena Core LogCleanupTaskService-a (Core ga registruje u parent::initServices, SingleInstance): Core-ov
+        // dnevni LogCleanupListener sada stavlja u red plugin0 LogRetentionTask, koji briše po podešavanju na snazi,
+        // i plugin0 redove u ps_log (docs/BACKGROUND.md, 8). Vidi BackgroundProcessing\LogCleanup.
+        ServiceRegister::registerService(LogCleanupTaskServiceInterface::class, new SingleInstance(static function () {
+            return new LogCleanupTaskService();
+        }));
+    }
+
+    /**
+     * Zamena Core AutoCaptureCheckListener-a. Core ga registruje u parent::initBackgroundProcesses i uzima iz
+     * ServiceRegister-a tek kad okine TickEvent (BootstrapComponent.php:470-473), pa važi ova registracija: na 15 minuta
+     * plugin0 pregled dospelih plaćanja (AutoCaptureScanTask) umesto Core AutoCaptureCheckTask-a, i samo dok je auto
+     * capture uključen (docs/BACKGROUND.md, 7). Vidi BackgroundProcessing\AutoCapture.
+     */
+    protected static function initBackgroundProcesses(): void
+    {
+        parent::initBackgroundProcesses();
+
+        ServiceRegister::registerService(AutoCaptureCheckListener::class, new SingleInstance(static function () {
+            return new AutoCaptureListener(
+                ServiceRegister::getService(QueueService::class),
+                ServiceRegister::getService(TimeProviderInterface::class),
+                ServiceRegister::getService(TenantRegistryInterface::class)
+            );
+        }));
     }
 
     /**
@@ -210,9 +245,9 @@ class Bootstrap extends BootstrapComponent
     }
 
     /**
-     * Svaki core entitet dobija klasu koja ga čita i piše u PrestaShop bazi.
-     * QueueItem namerno nije ovde: on traži QueueItemRepository (posebne metode za red zadataka)
-     * i dolazi u koraku za webhook-e i pozadinske zadatke.
+     * Svaki core entitet dobija klasu koja ga čita i piše u PrestaShop bazi. QueueItem dobija posebnu klasu
+     * (Infrastructure\Repository\QueueItemRepository), jer Core za red zadataka traži i metode za izbor sledećeg
+     * zadatka i uslovni upis (docs/BACKGROUND.md, 1.5 i 4.2).
      */
     protected static function initRepositories(): void
     {
@@ -235,11 +270,13 @@ class Bootstrap extends BootstrapComponent
             ProductTypeEntity::class,
             TokenEntity::class,
             // Entiteti koji nisu Core-ovi: metoda plaćanja iz demo projekta (Entity\PaymentMethodEntity), log
-            // capture/refund/cancel pokušaja sa admin stranice narudžbine (Entity\PaymentOperationEntity) i evidencija
-            // obrađenih webhook događaja (Entity\WebhookEventEntity).
+            // capture/refund/cancel pokušaja sa admin stranice narudžbine (Entity\PaymentOperationEntity), evidencija
+            // obrađenih webhook događaja (Entity\WebhookEventEntity) i evidencija automatskih naplata
+            // (Entity\AutoCaptureEntity).
             PaymentMethodEntity::class,
             PaymentOperationEntity::class,
             WebhookEventEntity::class,
+            AutoCaptureEntity::class,
         ];
 
         foreach ($entities as $entityClass) {
@@ -248,5 +285,6 @@ class Bootstrap extends BootstrapComponent
 
         RepositoryRegistry::registerRepository(MonitoringLog::class, LogsRepository::getClassName());
         RepositoryRegistry::registerRepository(WebhookLog::class, LogsRepository::getClassName());
+        RepositoryRegistry::registerRepository(QueueItem::class, QueueItemRepository::getClassName());
     }
 }

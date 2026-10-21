@@ -29,7 +29,7 @@ class Plugin0 extends PaymentModule
         // (Payment > Preferences > Currency restrictions).
         $this->currencies = true;
         $this->currencies_mode = 'checkbox';
-        $this->controllers = ['payment', 'return', 'webhook'];
+        $this->controllers = ['payment', 'return', 'webhook', 'asyncprocess'];
 
         parent::__construct();
         $this->displayName = $this->l('Plugin0 Worldline Payments');

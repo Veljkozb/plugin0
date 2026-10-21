@@ -437,7 +437,8 @@ na portu 1080 ih prikazuje. Sam se prebacuje u pozadinu. Detalji su u poglavlju 
 **`/usr/sbin/cron -P`**, daemon koji izvrsava komande po rasporedu.
 - Jedini posao je u `/etc/cron.d/php`: u :09 i :39 svakog sata `root` pokrece `/usr/lib/php/sessionclean`, koji
   brise stare PHP session fajlove.
-- PrestaShop i plugin0 ovde nemaju cron poslove. Korisnik `www-data` nema crontab.
+- PrestaShop i plugin0 ovde nemaju cron poslove. Korisnik `www-data` nema crontab. Od 2026-10-20 postoji i
+  `/etc/cron.d/plugin0-task-runner` (budi plugin0 task runner svakog minuta, 14.9).
 
 **Linija 135: placeholder za docroot.** `sed` menja `__dockware_apache_docroot__` u `000-default.conf`. Tvoj
 vhost iz Dockerfile-a nema taj placeholder, pa se nista ne menja.
@@ -1425,6 +1426,37 @@ baze 2026-10-16: sandbox je na capture vracao i `CAPTURED` odmah (narudzbina 16)
 PrestaShop upise uplatu za ceo iznos fakture, ne za naplaceni (narudzbina 16: uplata 68,93, naplaceno 51,00); po
 beleskama je odluceno da ostane tako.
 
+
+### 14.9 Pozadinska obrada: task runner, cron, auto capture, ciscenje logova (MIDU-1230)
+
+Ceo opis (engleski, za PR): `docs/BACKGROUND.md`. Ovde samo ono sto je vezano za okruzenje.
+
+**Delovi:** red zadataka u `ps_plugin0_entity` (`type = 'QueueItem'`, klasa `src/Infrastructure/Repository/QueueItemRepository.php`),
+asinhroni ulaz `controllers/front/asyncprocess.php` (adresa `https://8-2-4.prestashop.veljko.ngrok.app/en/module/plugin0/asyncprocess?guid=...`),
+okidac `bin/task-runner-wakeup.php` iz cron-a, zadaci u `src/BackgroundProcessing/` i dva polja na Settings strani
+(Auto capture, Log retention).
+
+**Cron u kontejneru `logeecom_dev`:** fajl `/etc/cron.d/plugin0-task-runner`, red
+`* * * * * www-data php -d xdebug.mode=off /var/www/html/public/prestashop/8-2-4/modules/plugin0/bin/task-runner-wakeup.php >> /tmp/plugin0-task-runner-wakeup.log 2>&1`.
+`cron` u kontejneru vec radi: pokrece ga dockware entrypoint pri svakom startu (`/entrypoint.sh:126-127`, vidi
+"Linija 127: cron" gore), pa se posle restarta kontejnera nista ne radi rucno. Fajl u `/etc/cron.d` ostaje dok se
+kontejner ne napravi iznova (`docker compose up --build`, brisanje kontejnera); tada ga treba ponovo upisati.
+
+**Sta se vidi dok radi:** novi runner otprilike na svakih 6 s (Core status `taskRunnerStatus` u `ps_plugin0_entity`,
+`type = 'Configuration'`), jedan `Process` red u toku, a `QueueItem` redovi za periodicne zadatke: Core
+`TransactionStatusCheckTask` i plugin0 pregled auto capture-a na 15 min, Core `TaskCleanupTask` i plugin0
+`LogRetentionTask` jednom dnevno. Runner sam po sebi u `ps_log` pise samo na nivou Debug.
+
+**ngrok:** adresa prodavnice je ngrok domen, pa svaki samopoziv runnera (jedan po krugu, plus jedan po zadatku) ide iz
+kontejnera kroz ngrok i nazad. Radi (provereno 2026-10-20), ali to je stalan saobracaj kroz tunel; ako ngrok nije
+pokrenut, samopozivi ne stizu i lanac stane posle prvog promasaja (cron ga posle pokusava svakog minuta).
+
+**Provereno 2026-10-20:** lanac, cron koji ozivi zaustavljen lanac, ponavljanje zadatka do 6 puta, ciscenje logova sa
+promenom podesavanja, auto capture bez ijedne naplate (stanje placanja, "nema sta da se naplati", put greske).
+Nije provereno: automatska naplata do kraja, sa capture zahtevom koji zaista ode u Worldline test okruzenje
+(preprod; radi je tim test karticom: novo placanje sa "Authorize only", ukljucen
+auto capture, pa 60-75 min) i obe stranice u browseru.
+
 ---
 
 ## 15. Mejlovi
@@ -1564,6 +1596,9 @@ Sve se kucaju u WSL Ubuntu terminalu.
 | backup baze | `docker exec logeecom_dev mysqldump -uroot -proot --single-transaction prestashop > prestashop-backup.sql` |
 | zavisnosti plugin0 (u kontejneru) | `docker exec -u 1000:1000 -e HOME=/tmp/plugin0-home -w /var/www/html/public/prestashop/8-2-4/modules/plugin0 logeecom_dev composer install` |
 | unit testovi plugin0 | `docker exec -u 1000:1000 -e HOME=/tmp/plugin0-home -w /var/www/html/public/prestashop/8-2-4/modules/plugin0 logeecom_dev php -d xdebug.mode=off vendor/bin/phpunit` |
+| rucno budjenje task runner-a | `docker exec -u www-data logeecom_dev php -d xdebug.mode=off /var/www/html/public/prestashop/8-2-4/modules/plugin0/bin/task-runner-wakeup.php` |
+| sta je cron radio | `docker exec logeecom_dev tail -n 20 /tmp/plugin0-task-runner-wakeup.log` |
+| red zadataka | `docker exec logeecom_dev mysql -uroot -proot prestashop -e "select id, index_1 status, index_2 task, index_3 queue from ps_plugin0_entity where type = 'QueueItem' order by id desc limit 20"` |
 
 ---
 
@@ -1581,6 +1616,7 @@ Sve se kucaju u WSL Ubuntu terminalu.
 - Da li ngrok salje `X-Forwarded-Proto: https` u tvom okruzenju (po dokumentaciji ngrok-a da).
 - Ponasanje `docker compose stop` prema `mysqld` (SIGTERM → SIGKILL posle 10 s), po pravilima za PID 1.
 - Zasto je kontejner pre 2026-10-13 bio u stanju `Exited (255)`.
+- Koliko samopoziva task runner-a kroz ngrok dozvoljava ngrok plan (14.9).
 
 Stavka "da li `ActionDispatcherLegacyHooksSubscriber` okida hook za Symfony rute" uklonjena je 2026-10-16: provereno
 u kodu PrestaShop-a (13.1, korak 5), ne radom.

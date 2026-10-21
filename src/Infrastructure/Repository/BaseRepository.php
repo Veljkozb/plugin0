@@ -352,7 +352,7 @@ class BaseRepository implements ConditionallyDeletes
      *
      * @param array<string, mixed> $context
      */
-    private function log(int $level, string $message, array $context): void
+    protected function log(int $level, string $message, array $context): void
     {
         if (self::$isLogging) {
             return;

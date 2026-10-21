@@ -4,8 +4,6 @@ namespace Plugin0\Infrastructure;
 
 use Plugin0\Configuration;
 use RuntimeException;
-use WOP\OnlinePayments\Core\Bootstrap\ApiFacades\AdminConfig\AdminAPI\AdminAPI;
-use WOP\OnlinePayments\Core\BusinessLogic\AdminConfig\ApiFacades\GeneralSettingsAPI\Request\PaymentSettingsRequest;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\GeneralSettings\PaymentAction;
 use WOP\OnlinePayments\Core\BusinessLogic\Domain\PaymentMethod\MethodAdditionalData\Cards\AuthorizationMode;
 
@@ -67,13 +65,8 @@ final class PaymentActionSetting
     /** Vrednost na snazi: sačuvana ili Core default (SALE). */
     public static function current(string $storeId): string
     {
-        $response = AdminAPI::get()->generalSettings($storeId)->getGeneralSettings();
-        if (!$response->isSuccessful()) {
-            throw new RuntimeException(self::error($response->toArray()));
-        }
-
         return self::choice(
-            (string) ($response->toArray()['paymentSettings']['paymentAction'] ?? self::SALE),
+            (string) (CorePaymentSettings::read($storeId)['paymentAction'] ?? self::SALE),
             self::storedCardMode()
         );
     }
@@ -93,41 +86,8 @@ final class PaymentActionSetting
             throw new RuntimeException(sprintf('Unknown payment action "%s".', $paymentAction));
         }
 
-        $general = AdminAPI::get()->generalSettings($storeId);
-        $response = $general->getGeneralSettings();
-        if (!$response->isSuccessful()) {
-            throw new RuntimeException(self::error($response->toArray()));
-        }
-
-        $s = $response->toArray()['paymentSettings'];
-
-        // Status za "delimično vraćeno" prazan je u Core podešavanjima sačuvanim pre 2026-10-16 (StoreService ga tada
-        // nije davao); bez njega Core posle delimičnog refunda ne menja narudžbinu. Prazno se popunjava kao i u
-        // StoreService::getDefaultOrderStatusMapping: isti status kao za naplaćeno (PrestaShop "Payment accepted").
-        $partiallyRefunded = (string) ($s['paymentPartiallyRefundedStatus'] ?? '');
-        if ($partiallyRefunded === '') {
-            $partiallyRefunded = (string) \Configuration::get('PS_OS_PAYMENT');
-        }
-
-        $saved = $general->savePaymentSettings(new PaymentSettingsRequest(
-            self::coreAction($paymentAction),
-            (int) $s['automaticCapture'],
-            (int) $s['numberOfPaymentAttempts'],
-            (bool) $s['applySurcharge'],
-            (string) $s['paymentCapturedStatus'],
-            (string) $s['paymentErrorStatus'],
-            (string) $s['paymentPendingStatus'],
-            (string) $s['paymentAuthorizedStatus'],
-            (string) $s['paymentCancelledStatus'],
-            (string) $s['paymentRefundedStatus'],
-            (string) $s['template'],
-            $partiallyRefunded,
-            (bool) ($s['sendShoppingCart'] ?? true),
-            (bool) ($s['displayConfirmationPage'] ?? true)
-        ));
-        if (!$saved->isSuccessful()) {
-            throw new RuntimeException(self::error($saved->toArray()));
-        }
+        // Ostala polja Core PaymentSettings (automatic capture, statusi, ...) ostaju kakva jesu (CorePaymentSettings).
+        CorePaymentSettings::update($storeId, ['paymentAction' => self::coreAction($paymentAction)]);
 
         Configuration::getInstance()->storeValue(Configuration::KEY_CARD_AUTHORIZATION_MODE, self::cardMode($paymentAction));
     }
@@ -137,11 +97,5 @@ final class PaymentActionSetting
         $stored = Configuration::getInstance()->getStoredValue(Configuration::KEY_CARD_AUTHORIZATION_MODE);
 
         return $stored === self::PRE_AUTHORIZE || $stored === self::AUTHORIZE ? $stored : null;
-    }
-
-    /** @param array<string, mixed> $error */
-    private static function error(array $error): string
-    {
-        return (string) ($error['errorMessage'] ?? $error['errorCode'] ?? 'Unknown Core error.');
     }
 }
